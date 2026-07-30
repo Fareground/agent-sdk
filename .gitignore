@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.*
+
+# Type checking
+.mypy_cache/
+
+# Linting
+.ruff_cache/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Documentation
+site/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Internal research docs (not for public repo)
+docs/claude-code-*.md
+docs/proactive-agent-architecture.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local agent/editor state
+.claude/
