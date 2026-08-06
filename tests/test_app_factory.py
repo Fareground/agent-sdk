@@ -20,14 +20,16 @@ def test_create_app_returns_fastapi():
 
 
 def test_create_app_has_agent_routes():
-    """create_app() registers /sessions and /health routes."""
+    """create_app() registers /sessions and /health routes.
+
+    Asserted against the OpenAPI schema rather than ``app.routes``: since
+    FastAPI 0.141 an included router stays a single ``_IncludedRouter`` entry
+    instead of being flattened into ``app.routes``, so walking that list finds
+    nothing. The schema is the public contract and is stable across versions.
+    """
     app = create_app(
         agents={"test": AgentDefinition(name="test", model="mock:test")},
     )
-    route_paths = [getattr(r, "path", "") for r in app.routes]
-    assert any("/sessions" in p for p in route_paths), (
-        f"No /sessions route found in {route_paths}"
-    )
-    assert any("/health" in p for p in route_paths), (
-        f"No /health route found in {route_paths}"
-    )
+    paths = list(app.openapi()["paths"])
+    assert any("/sessions" in p for p in paths), f"No /sessions route found in {paths}"
+    assert any("/health" in p for p in paths), f"No /health route found in {paths}"

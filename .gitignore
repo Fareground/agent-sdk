@@ -41,9 +41,8 @@ site/
 *.swo
 *~
 
-# Internal research docs (not for public repo)
-docs/claude-code-*.md
-docs/proactive-agent-architecture.md
+# Working notes
+docs/
 
 # OS
 .DS_Store

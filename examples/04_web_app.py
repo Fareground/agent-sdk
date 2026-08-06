@@ -14,12 +14,12 @@ Or with Ollama (free, local):
     python examples/04_web_app.py
 """
 
+from datetime import UTC
+
 import uvicorn
-from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from fg_agents import AgentDefinition, ToolRegistry, create_app, tool
-
 
 # --- Define your tools ----------------------------------------------------
 
@@ -31,8 +31,8 @@ async def search(query: str) -> str:
 
 @tool(description="Get the current date")
 def today() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from datetime import datetime
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 # --- Define your agent ----------------------------------------------------

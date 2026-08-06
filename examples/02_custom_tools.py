@@ -11,7 +11,7 @@ No database required — uses in-memory persistence.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fg_agents import (
     AgentDefinition,
@@ -34,7 +34,7 @@ def add(a: float, b: float) -> float:
 @tool(description="Fetch the current UTC timestamp")
 async def get_timestamp() -> str:
     await asyncio.sleep(0.01)  # simulate async I/O
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # --- Tool with ExecutionContext: read/write working memory -----------------

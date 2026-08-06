@@ -12,6 +12,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/Fareground/agent-framework/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Fareground/agent-framework/ci.yml?branch=main&style=flat-square&label=CI" /></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+" />
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
   <img src="https://img.shields.io/badge/license-Apache--2.0-lightgrey" alt="Apache-2.0" />
