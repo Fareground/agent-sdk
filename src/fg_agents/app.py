@@ -102,4 +102,9 @@ def _resolve_repo(db_url: str | None):
     if "sqlite" in db_url:
         path = db_url.split("///", 1)[-1] if "///" in db_url else db_url
         return create_repository("sqlite", db_path=path)
-    return create_repository("memory")
+    if db_url == "memory":
+        return create_repository("memory")
+    raise ValueError(
+        f"Unrecognized db_url: '{db_url}'. "
+        "Use a postgres/sqlite URL, 'memory', or omit it for the SQLite default."
+    )

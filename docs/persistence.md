@@ -42,7 +42,8 @@ repo = create_repository("postgres", db_url="postgresql+asyncpg://user:pass@host
   `fg-agents[sqlite]` installed)
 - URL containing `postgres`/`postgresql` → PostgreSQL
 - URL containing `sqlite` → SQLite at the path after `///`
-- anything else → in-memory (no error — check your URL)
+- `"memory"` → in-memory
+- anything else → `ValueError` (typos fail loudly instead of silently losing persistence)
 
 ## Initialization semantics
 
