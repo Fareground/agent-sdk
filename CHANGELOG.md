@@ -5,7 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-08-10
+
+### ⚠️ Breaking — slimmer core install
+
+- **The web stack and PostgreSQL are now extras, not core dependencies.**
+  `pip install fg-agents` ships only the engine, tools, `ask`/`Agent`, and
+  in-memory persistence (pydantic, structlog, aiohttp). If you use:
+  - `create_app` / `create_agent_router` / the HTTP+SSE API → install
+    **`fg-agents[web]`** (fastapi + uvicorn)
+  - `PostgresRepository` / `memory="postgres:<url>"` → install
+    **`fg-agents[postgres]`** (sqlalchemy + asyncpg)
+  - `fg-agents[all]` still installs everything.
+  Missing extras fail at call time with an actionable install hint.
+- **`Base` (SQLAlchemy declarative base) removed from the top-level public
+  surface** (`fg_agents.Base`, `__all__`). It remains importable from
+  `fg_agents.persistence` when the `postgres` extra is installed.
+- **Bare model strings are rejected.** `model="gpt-5"` (no `provider:` prefix)
+  now raises `ValueError` listing the expected `provider:model` format and the
+  known providers, instead of being silently routed to a default provider.
+
+### Added
+
+- **Eager provider-dependency check.** `Agent(...)` (and therefore `ask()`)
+  verifies at construction that the resolved provider's SDK is installed and
+  raises a one-line, actionable error — e.g. *"The anthropic provider requires
+  the 'anthropic' package — pip install 'fg-agents[anthropic]'"* — instead of a
+  deep `ModuleNotFoundError` inside the engine. The same check guards client
+  creation for low-level `AgentLLM` use.
+- `SECURITY.md` and a core-only CI job that installs the bare package (no web,
+  no SQLAlchemy, no provider SDKs) and runs the non-web test subset.
+
+### Changed
+
+- `Agent` validates its memory/tools arguments before model detection, so
+  `Agent(memory="redis")` reports the bogus backend rather than a misleading
+  `ModelDetectionError`.
+- The engine no longer logs a full stack trace for clean, user-facing
+  configuration errors (`AgentFrameworkError` subclasses); stack logging is
+  reserved for genuine internal failures.
+- README hello-world is now directly runnable (`asyncio.run`), with the bare
+  `await` form kept only under an explicit async/REPL caption.
 
 ### Security — audit hardening (2026-07-23)
 
