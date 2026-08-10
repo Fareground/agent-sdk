@@ -72,9 +72,59 @@ pip install "fg-agents[all] @ git+https://github.com/Fareground/agent-framework.
 
 Requires Python 3.11+.
 
-## Usage
+## Quickstart
 
-### A single agent, streamed (no database)
+The `Agent` facade is one object that wires the LLM client, tool registry,
+persistence, and engine for you:
+
+```python
+import asyncio
+from fg_agents import Agent
+
+async def main():
+    agent = Agent(model="anthropic:claude-sonnet-4-6")
+    print(await agent.run("Say hello in one sentence."))
+
+asyncio.run(main())
+```
+
+Set the provider's API key first (`export ANTHROPIC_API_KEY=...`, or
+`OPENAI_API_KEY` with `model="openai:gpt-5.2"`, etc.). No key? Run a local
+model for free with [Ollama](https://ollama.com):
+`ollama pull qwen3:8b`, then `model="ollama:qwen3:8b"`.
+
+Add tools by passing plain functions — the schema is derived from the
+signature and docstring:
+
+```python
+def greet(name: str) -> str:
+    """Greet someone by name."""
+    return f"Hello, {name}!"
+
+agent = Agent(
+    model="anthropic:claude-sonnet-4-6",
+    tools=[greet],
+    system_prompt="You are a friendly greeter.",
+    memory="sqlite",   # persist sessions; "memory" (default) or "postgres:<url>"
+)
+
+result = await agent.run("Please greet Ada.")   # -> AgentRunResult(.text, .session_id, .events)
+
+async for event in agent.stream("Tell me more"):  # raw StreamEvents as they happen
+    print(event.type, event.data)
+```
+
+Any failure in `run()` — an engine error event or a raised exception — surfaces
+as a single `AgentRunError` carrying the `session_id` and the partial `events`,
+with the original exception chained as `__cause__`. Each `Agent` instance keeps
+one conversation by default; pass `session_id=` per call to target another.
+
+### Going lower level
+
+The facade is sugar over four objects you can wire yourself when you need full
+control (custom middleware, skills, shared registries across agents). Graduate
+gradually via `agent.engine`, `agent.llm`, `agent.tools`, and
+`agent.repository` — or build the stack directly:
 
 ```python
 import asyncio
@@ -89,14 +139,14 @@ def greet(name: str) -> str:
 async def main():
     llm = AgentLLM()
     repo = create_repository("memory")   # or "sqlite", "postgres"
-    await repo.initialize()
+    await repo.initialize()             # explicit here; the facade does this lazily
 
     tools = ToolRegistry()
     tools.register_function(greet)
 
     agent = AgentDefinition(
         name="greeter",
-        model="openai:gpt-4.1",          # required — no default model
+        model="anthropic:claude-sonnet-4-6",  # required — no default model
         system_prompt="You are a friendly greeter. Use the greet tool when asked.",
         tools=["greet"],
     )
@@ -110,7 +160,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### A full web backend
+## A full web backend
 
 `create_app` returns a FastAPI application exposing routes to start sessions,
 post messages, and stream replies over SSE.
@@ -149,14 +199,21 @@ POST /api/agent/sessions                       -> { "session_id": "..." }
 POST /api/agent/sessions/{id}/messages         -> text/event-stream (SSE)
 ```
 
-See [`examples/`](examples/) for four runnable apps, from a ~25-line hello-world
-to a complete chat UI ([`examples/04_web_app.py`](examples/04_web_app.py)), plus
-frontend SSE clients in [`examples/frontend/`](examples/frontend).
+See [`examples/`](examples/) for five runnable apps, from a two-line facade
+hello-world to a complete chat UI ([`examples/04_web_app.py`](examples/04_web_app.py)),
+plus frontend SSE clients in [`examples/frontend/`](examples/frontend).
+
+## Documentation
+
+- [`docs/api.md`](docs/api.md) — reference for the public API surface
+- [`docs/streaming.md`](docs/streaming.md) — the SSE wire format and every event type (for frontend authors)
+- [`docs/persistence.md`](docs/persistence.md) — memory / SQLite / PostgreSQL backends and initialization semantics
 
 ## Concepts / Building blocks
 
 | Building block | What it is |
 |---|---|
+| **`Agent`** | The facade — one object that wires LLM, tools, persistence, and engine; `run()` returns an `AgentRunResult`, failures raise `AgentRunError`. |
 | **`AgentDefinition`** | Declarative agent config — name, model, system prompt, tools, sub-agents. No default model; you choose the provider at runtime. |
 | **`AgentEngine`** | The ReAct loop: model → tools → model → …, emitting stream events at each step. |
 | **`Orchestrator`** | A coordinator agent that plans, delegates to sub-agents (in parallel), and synthesizes results. |
@@ -193,6 +250,7 @@ flowchart TB
 
 ```
 src/fg_agents/
+    agent.py       Agent facade — one-object setup (quickstart tier)
     core/          Engine, LLM client, types, errors
     tools/         @tool decorator, registry, built-in tools, handlers
     orchestrator/  Multi-agent orchestration + sub-agent runner
@@ -205,8 +263,9 @@ src/fg_agents/
     scheduler/     Cron-scheduled agents
     api/           Service layer, FastAPI router, auth, schemas
     app.py         create_app() application factory
-examples/          Four runnable apps + frontend SSE clients
-tests/             270+ tests across 28 test files
+examples/          Five runnable apps + frontend SSE clients
+docs/              Reference docs: API, streaming wire format, persistence
+tests/             290+ tests
 ```
 
 ## Contributing

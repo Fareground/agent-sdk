@@ -41,8 +41,8 @@ site/
 *.swo
 *~
 
-# Working notes
-docs/
+# Working notes (committed reference docs live in docs/)
+docs/internal/
 
 # OS
 .DS_Store
