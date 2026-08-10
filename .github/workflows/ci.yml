@@ -21,3 +21,33 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check .
       - run: pytest -q
+
+  core-only:
+    # A bare `pip install fg-agents` ships no web stack, no SQLAlchemy, no
+    # provider SDKs — the engine and Agent facade must still import and run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - run: |
+          python -c "
+          import fg_agents
+          agent = fg_agents.Agent(model='mock:test')
+          assert 'Base' not in fg_agents.__all__
+          try:
+              fg_agents.create_app(agents={})
+          except ImportError as e:
+              assert 'fg-agents[web]' in str(e), str(e)
+          else:
+              raise AssertionError('create_app must fail without the web extra')
+          print('core-only import OK')
+          "
+      - run: pip install pytest pytest-asyncio
+      - run: >
+          pytest -q tests/test_core_only.py tests/test_engine.py tests/test_llm.py
+          tests/test_tools.py tests/test_types.py tests/test_working_memory.py
+          tests/test_context.py tests/test_middleware.py tests/test_streaming.py

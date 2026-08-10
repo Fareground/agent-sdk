@@ -7,7 +7,7 @@ Sessions and message history are stored through one async interface,
 |---|---|---|---|
 | `memory` | `InMemoryRepository` | Tests, throwaway scripts. Lost on process exit. | none |
 | `sqlite` | `SQLiteRepository` | Local dev, single-process apps. One file on disk. | `pip install "fg-agents[sqlite]"` (aiosqlite) |
-| `postgres` | `PostgresRepository` | Production, multi-process. | none — SQLAlchemy + asyncpg are core deps |
+| `postgres` | `PostgresRepository` | Production, multi-process. | `pip install "fg-agents[postgres]"` (SQLAlchemy + asyncpg) |
 
 ## Choosing a backend
 

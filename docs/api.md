@@ -302,7 +302,7 @@ from fg_agents import create_repository
 
 repo = create_repository("memory")                                   # tests / throwaway
 repo = create_repository("sqlite", db_path="agents.db")              # local dev (needs fg-agents[sqlite])
-repo = create_repository("postgres", db_url="postgresql+asyncpg://…")# production
+repo = create_repository("postgres", db_url="postgresql+asyncpg://…")# production (needs fg-agents[postgres])
 await repo.initialize()   # required before use (the Agent facade does this for you)
 ```
 
@@ -312,6 +312,9 @@ and dependency requirements: [persistence.md](persistence.md).
 ---
 
 ## Web layer
+
+Requires the `web` extra (`pip install "fg-agents[web]"`); without it,
+`create_app`/`create_agent_router` raise `ImportError` with the install hint.
 
 ```python
 from fg_agents import create_app

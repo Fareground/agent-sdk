@@ -7,15 +7,27 @@ Backend support: memory (testing), sqlite (dev), postgres (production).
 from fg_agents.persistence.base import BaseRepository
 from fg_agents.persistence.factory import create_repository
 from fg_agents.persistence.memory import InMemoryRepository
-from fg_agents.persistence.models import (
-    AgentArtifactModel,
-    AgentAuditLogModel,
-    AgentMemoryModel,
-    AgentMessageModel,
-    AgentSessionModel,
-    AgentToolExecutionModel,
-    Base,
-)
+
+# The SQLAlchemy models (and PostgresRepository below) need the 'postgres'
+# extra; a core install works without them.
+try:
+    from fg_agents.persistence.models import (
+        AgentArtifactModel,
+        AgentAuditLogModel,
+        AgentMemoryModel,
+        AgentMessageModel,
+        AgentSessionModel,
+        AgentToolExecutionModel,
+        Base,
+    )
+except ImportError:
+    Base = None  # type: ignore[assignment,misc]
+    AgentArtifactModel = None  # type: ignore[assignment,misc]
+    AgentAuditLogModel = None  # type: ignore[assignment,misc]
+    AgentMemoryModel = None  # type: ignore[assignment,misc]
+    AgentMessageModel = None  # type: ignore[assignment,misc]
+    AgentSessionModel = None  # type: ignore[assignment,misc]
+    AgentToolExecutionModel = None  # type: ignore[assignment,misc]
 
 # PostgresRepository requires asyncpg + sqlalchemy
 try:
@@ -24,8 +36,8 @@ except ImportError:
 
     def _postgres_not_installed(*args, **kwargs):
         raise ImportError(
-            "PostgresRepository requires asyncpg and sqlalchemy (core dependencies "
-            "of fg-agents). Install with: pip install 'sqlalchemy[asyncio]' asyncpg"
+            "PostgresRepository requires SQLAlchemy and asyncpg. "
+            "Install with: pip install 'fg-agents[postgres]'"
         )
 
     PostgresRepository = _postgres_not_installed  # type: ignore[assignment,misc]

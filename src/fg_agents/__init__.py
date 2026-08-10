@@ -136,7 +136,6 @@ from fg_agents.orchestrator.sub_agent import SubAgentRunner
 from fg_agents.persistence.base import BaseRepository
 from fg_agents.persistence.factory import create_repository
 from fg_agents.persistence.memory import InMemoryRepository
-from fg_agents.persistence.models import Base
 
 try:
     from fg_agents.persistence.repository import PostgresRepository, Repository
@@ -144,8 +143,8 @@ except ImportError:
 
     def _postgres_not_installed(*args, **kwargs):
         raise ImportError(
-            "PostgresRepository requires asyncpg and sqlalchemy (core dependencies "
-            "of fg-agents). Install with: pip install 'sqlalchemy[asyncio]' asyncpg"
+            "PostgresRepository requires SQLAlchemy and asyncpg. "
+            "Install with: pip install 'fg-agents[postgres]'"
         )
 
     PostgresRepository = _postgres_not_installed  # type: ignore[assignment,misc]
@@ -192,8 +191,7 @@ except ImportError as e:
     def _fastapi_not_installed(*args, **kwargs):
         raise ImportError(
             "The web layer (create_app, create_agent_router, AgentService) requires "
-            "FastAPI, a core dependency of fg-agents. Your environment is missing it — "
-            "install with: pip install fastapi 'uvicorn[standard]'"
+            "FastAPI and uvicorn. Install with: pip install 'fg-agents[web]'"
         ) from _web_import_error
 
     create_agent_router = _fastapi_not_installed  # type: ignore[assignment,misc]
@@ -275,7 +273,6 @@ __all__ = [
     "PostgresRepository",
     "SQLiteRepository",
     "Repository",
-    "Base",
     # Streaming
     "StreamEvent",
     # Prompts

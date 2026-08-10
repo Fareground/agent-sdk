@@ -16,7 +16,17 @@ Usage:
     repo = create_repository("postgres", db_url="postgresql+asyncpg://...")
 """
 
+from importlib.util import find_spec
+
 from fg_agents.persistence.base import BaseRepository
+
+
+def _module_available(module: str) -> bool:
+    """True when a module can be found. A raising finder counts as missing."""
+    try:
+        return find_spec(module) is not None
+    except ImportError:
+        return False
 
 
 def create_repository(backend: str = "memory", **kwargs) -> BaseRepository:
@@ -41,11 +51,21 @@ def create_repository(backend: str = "memory", **kwargs) -> BaseRepository:
         return InMemoryRepository()
 
     elif backend == "sqlite":
+        if not _module_available("aiosqlite"):
+            raise ImportError(
+                "The sqlite backend requires the 'aiosqlite' package — "
+                "pip install 'fg-agents[sqlite]'"
+            )
         from fg_agents.persistence.sqlite import SQLiteRepository
 
         return SQLiteRepository(**kwargs)
 
     elif backend in ("postgres", "postgresql"):
+        if not _module_available("sqlalchemy") or not _module_available("asyncpg"):
+            raise ImportError(
+                "The postgres backend requires SQLAlchemy and asyncpg — "
+                "pip install 'fg-agents[postgres]'"
+            )
         from fg_agents.persistence.repository import PostgresRepository
 
         return PostgresRepository(**kwargs)
