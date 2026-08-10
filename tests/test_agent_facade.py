@@ -5,7 +5,7 @@ Uses the shared MockLLM helpers so no network or DB is required.
 """
 import pytest
 
-from fg_agents import Agent, AgentRunResult
+from fg_agents import Agent, AgentRunError, AgentRunResult
 from fg_agents.core.engine import AgentEngine
 from fg_agents.core.llm import AgentLLM
 from fg_agents.core.types import EventType, RegisteredTool
@@ -50,6 +50,14 @@ def test_construct_with_registered_tool():
 def test_construct_rejects_non_callable_tool():
     with pytest.raises(TypeError):
         Agent(model="mock:test", tools=[42])
+
+
+def test_duplicate_tool_names_rejected():
+    def add(a: int, b: int) -> int:  # same name as the module-level @tool add
+        return a + b
+
+    with pytest.raises(ValueError, match="Duplicate tool name 'add'"):
+        Agent(model="mock:test", tools=[globals()["add"], add])
 
 
 def test_agent_kwargs_pass_through_to_definition():
@@ -161,6 +169,61 @@ async def test_close_shuts_down_repository():
     agent = Agent(model="mock:test", llm=llm)
     await agent.run("hello")
     await agent.close()  # must not raise
+    await agent.close()  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_run_after_close_raises():
+    agent = Agent(model="mock:test", llm=MockLLM([make_text_response("x")]))
+    await agent.close()
+    with pytest.raises(RuntimeError, match="Agent is closed"):
+        await agent.run("hello")
+
+
+@pytest.mark.asyncio
+async def test_failure_surfaces_as_agent_run_error():
+    class ExplodingLLM:
+        async def stream_with_tools(self, **kwargs):
+            raise RuntimeError("provider exploded")
+            yield  # pragma: no cover — makes this an async generator
+
+        async def count_tokens(self, text: str, model: str = "") -> int:
+            return len(text.split())
+
+    agent = Agent(model="mock:test", llm=ExplodingLLM())
+
+    with pytest.raises(AgentRunError) as exc_info:
+        await agent.run("hello")
+
+    err = exc_info.value
+    assert err.session_id == agent.session_id
+    assert err.events  # partial events collected before the failure
+    assert any(e.type == EventType.SESSION_STARTED for e in err.events)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_runs_initialize_repository_once():
+    import asyncio
+
+    repo = InMemoryRepository()
+    init_calls = 0
+    original_initialize = repo.initialize
+
+    async def counting_initialize():
+        nonlocal init_calls
+        init_calls += 1
+        await asyncio.sleep(0)  # widen the race window
+        await original_initialize()
+
+    repo.initialize = counting_initialize
+    llm = MockLLM([make_text_response("ok")])
+    agent = Agent(model="mock:test", llm=llm, memory=repo)
+
+    await asyncio.gather(
+        agent.run("one", session_id="s-a"),
+        agent.run("two", session_id="s-b"),
+    )
+    assert init_calls == 1
 
 
 # ══════════════════════════════════════════════════════════════════════

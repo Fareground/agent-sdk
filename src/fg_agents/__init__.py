@@ -64,7 +64,7 @@ try:
 except PackageNotFoundError:  # editable/source checkout without install metadata
     __version__ = "0.0.0.dev0"
 
-from fg_agents.agent import Agent, AgentRunResult
+from fg_agents.agent import Agent, AgentRunError, AgentRunResult
 from fg_agents.core.engine import AgentEngine
 from fg_agents.core.errors import (
     AgentFrameworkError,
@@ -174,14 +174,15 @@ try:
     from fg_agents.api.service import AgentService
     from fg_agents.app import create_app
     from fg_agents.dependencies import get_service, get_user_context
-except ImportError:
+except ImportError as e:
+    _web_import_error = e
 
     def _fastapi_not_installed(*args, **kwargs):
         raise ImportError(
             "The web layer (create_app, create_agent_router, AgentService) requires "
             "FastAPI, a core dependency of fg-agents. Your environment is missing it — "
             "install with: pip install fastapi 'uvicorn[standard]'"
-        )
+        ) from _web_import_error
 
     create_agent_router = _fastapi_not_installed  # type: ignore[assignment,misc]
     AgentService = _fastapi_not_installed  # type: ignore[assignment,misc]
@@ -192,6 +193,7 @@ except ImportError:
 __all__ = [
     # Facade
     "Agent",
+    "AgentRunError",
     "AgentRunResult",
     # Core types
     "AgentSession",

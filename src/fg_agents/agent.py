@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
 from fg_agents.core.engine import AgentEngine
+from fg_agents.core.errors import AgentFrameworkError
 from fg_agents.core.llm import AgentLLM
 from fg_agents.core.types import AgentDefinition, EventType, RegisteredTool
 from fg_agents.persistence.base import BaseRepository
@@ -32,6 +33,20 @@ from fg_agents.persistence.factory import create_repository
 from fg_agents.streaming.events import StreamEvent
 from fg_agents.tools.decorators import tool as tool_decorator
 from fg_agents.tools.registry import ToolRegistry
+
+
+class AgentRunError(AgentFrameworkError):
+    """
+    Raised by :meth:`Agent.run` when a run fails.
+
+    Carries the session id and the partial events collected before the
+    failure. The original exception (if any) is chained as ``__cause__``.
+    """
+
+    def __init__(self, message: str, session_id: str, events: list[StreamEvent]):
+        super().__init__(message)
+        self.session_id = session_id
+        self.events = events
 
 
 @dataclass(frozen=True)
@@ -104,6 +119,7 @@ class Agent:
         )
         self._session_id = session_id or f"agent-{uuid.uuid4().hex[:12]}"
         self._initialized = False
+        self._closed = False
         self._init_lock = asyncio.Lock()
 
     # ── Setup helpers ─────────────────────────────────────────────────
@@ -136,13 +152,19 @@ class Agent:
 
     def _register_tool(self, t: Callable | RegisteredTool) -> None:
         if isinstance(t, RegisteredTool):
-            self._registry.register(t)
+            registered = t
         elif callable(t):
             if not hasattr(t, "tool_definition"):
                 t = tool_decorator()(t)  # wrap plain callables
-            self._registry.register_function(t)
+            registered = t.tool_definition
         else:
             raise TypeError(f"Cannot register tool {t!r} — must be callable or RegisteredTool")
+        if self._registry.has(registered.name):
+            raise ValueError(
+                f"Duplicate tool name '{registered.name}' in tools=[...] — "
+                "tool names must be unique."
+            )
+        self._registry.register(registered)
 
     async def _ensure_initialized(self) -> None:
         """Initialize the repository exactly once, safely under concurrency."""
@@ -168,21 +190,37 @@ class Agent:
 
         Continues the Agent's conversation by default; pass ``session_id``
         to target a different conversation.
+
+        Failure contract: any failure — an engine-emitted ERROR event or an
+        exception raised during the run — surfaces as :class:`AgentRunError`
+        carrying ``session_id`` and the partial ``events`` collected so far.
+        The original exception, when there is one, is chained as ``__cause__``.
         """
+        if self._closed:
+            raise RuntimeError("Agent is closed")
         events: list[StreamEvent] = []
         final_text = ""
         sid = session_id or self._session_id
-        async for event in self.stream(
-            message, session_id=sid, metadata=metadata, variables=variables
-        ):
-            events.append(event)
-            if event.type == EventType.SESSION_COMPLETED:
-                final_text = event.data.get("final_output", "")
-            elif event.type == EventType.ERROR:
-                raise RuntimeError(
-                    f"Agent run failed ({event.data.get('error_type', 'error')}): "
-                    f"{event.data.get('message', 'unknown error')}"
-                )
+        try:
+            async for event in self.stream(
+                message, session_id=sid, metadata=metadata, variables=variables
+            ):
+                events.append(event)
+                if event.type == EventType.SESSION_COMPLETED:
+                    final_text = event.data.get("final_output", "")
+                elif event.type == EventType.ERROR:
+                    raise AgentRunError(
+                        f"Agent run failed ({event.data.get('error_type', 'error')}): "
+                        f"{event.data.get('message', 'unknown error')}",
+                        session_id=sid,
+                        events=events,
+                    )
+        except AgentRunError:
+            raise
+        except Exception as e:
+            raise AgentRunError(
+                f"Agent run failed: {e}", session_id=sid, events=events
+            ) from e
         return AgentRunResult(text=final_text, session_id=sid, events=events)
 
     async def stream(
@@ -193,7 +231,16 @@ class Agent:
         metadata: dict | None = None,
         variables: dict | None = None,
     ) -> AsyncIterator[StreamEvent]:
-        """Run the agent and yield StreamEvents as they happen."""
+        """
+        Run the agent and yield StreamEvents as they happen.
+
+        Failure contract: engine failures surface either as ERROR events in
+        the stream (the engine's in-loop handling) or as raw engine
+        exceptions propagating out of the iterator — callers of ``stream()``
+        handle both. Use :meth:`run` for a single, uniform ``AgentRunError``.
+        """
+        if self._closed:
+            raise RuntimeError("Agent is closed")
         await self._ensure_initialized()
         async for event in self._engine.run(
             session_id or self._session_id,
@@ -205,10 +252,12 @@ class Agent:
             yield event
 
     async def close(self) -> None:
-        """Close the underlying repository."""
+        """Close the underlying repository. The Agent is unusable afterwards."""
+        if self._closed:
+            return
+        self._closed = True
         if self._initialized:
             await self._repository.close()
-            self._initialized = False
 
     # ── Graduation to the low-level API ───────────────────────────────
 
