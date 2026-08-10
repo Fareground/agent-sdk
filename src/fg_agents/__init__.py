@@ -56,8 +56,15 @@ Quick start::
         print(event.to_sse())  # SSE-formatted for streaming to frontend
 """
 
-__version__ = "0.3.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
 
+try:
+    __version__ = _pkg_version("fg-agents")
+except PackageNotFoundError:  # editable/source checkout without install metadata
+    __version__ = "0.0.0.dev0"
+
+from fg_agents.agent import Agent, AgentRunResult
 from fg_agents.core.engine import AgentEngine
 from fg_agents.core.errors import (
     AgentFrameworkError,
@@ -125,8 +132,8 @@ except ImportError:
 
     def _postgres_not_installed(*args, **kwargs):
         raise ImportError(
-            "PostgresRepository requires asyncpg and sqlalchemy. "
-            "Install with: pip install 'fg-agents[postgres]'"
+            "PostgresRepository requires asyncpg and sqlalchemy (core dependencies "
+            "of fg-agents). Install with: pip install 'sqlalchemy[asyncio]' asyncpg"
         )
 
     PostgresRepository = _postgres_not_installed  # type: ignore[assignment,misc]
@@ -168,13 +175,24 @@ try:
     from fg_agents.app import create_app
     from fg_agents.dependencies import get_service, get_user_context
 except ImportError:
-    create_agent_router = None  # type: ignore[assignment,misc]
-    AgentService = None  # type: ignore[assignment,misc]
-    create_app = None  # type: ignore[assignment,misc]
-    get_service = None  # type: ignore[assignment,misc]
-    get_user_context = None  # type: ignore[assignment,misc]
+
+    def _fastapi_not_installed(*args, **kwargs):
+        raise ImportError(
+            "The web layer (create_app, create_agent_router, AgentService) requires "
+            "FastAPI, a core dependency of fg-agents. Your environment is missing it — "
+            "install with: pip install fastapi 'uvicorn[standard]'"
+        )
+
+    create_agent_router = _fastapi_not_installed  # type: ignore[assignment,misc]
+    AgentService = _fastapi_not_installed  # type: ignore[assignment,misc]
+    create_app = _fastapi_not_installed  # type: ignore[assignment,misc]
+    get_service = _fastapi_not_installed  # type: ignore[assignment,misc]
+    get_user_context = _fastapi_not_installed  # type: ignore[assignment,misc]
 
 __all__ = [
+    # Facade
+    "Agent",
+    "AgentRunResult",
     # Core types
     "AgentSession",
     "AgentMessage",

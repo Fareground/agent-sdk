@@ -1,8 +1,7 @@
 """
 Fareground Agent Framework — PostgreSQL Data Access Layer
 
-Async repository using SQLAlchemy + asyncpg.
-Requires: pip install "fg-agents[postgres]"
+Async repository using SQLAlchemy + asyncpg (core dependencies of fg-agents).
 """
 
 import json

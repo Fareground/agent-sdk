@@ -24,8 +24,8 @@ except ImportError:
 
     def _postgres_not_installed(*args, **kwargs):
         raise ImportError(
-            "PostgresRepository requires asyncpg and sqlalchemy. "
-            "Install with: pip install 'fg-agents[postgres]'"
+            "PostgresRepository requires asyncpg and sqlalchemy (core dependencies "
+            "of fg-agents). Install with: pip install 'sqlalchemy[asyncio]' asyncpg"
         )
 
     PostgresRepository = _postgres_not_installed  # type: ignore[assignment,misc]
