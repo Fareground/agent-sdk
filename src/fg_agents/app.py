@@ -13,6 +13,7 @@ Usage:
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from importlib.util import find_spec
 from typing import Any
 
 import structlog
@@ -46,7 +47,9 @@ def create_app(
 
     Args:
         agents: Named agent definitions (e.g., {"assistant": assistant_def}).
-        db_url: Database URL. PostgreSQL for production, SQLite if None.
+        db_url: Database URL. PostgreSQL for production; None defaults to a
+            local SQLite file (requires 'fg-agents[sqlite]'); "memory" for
+            in-memory persistence.
         api_keys: LLM provider API keys (e.g., {"openai": "sk-..."}).
         tool_registry: Pre-configured ToolRegistry with your tools registered.
         cors_origins: Allowed CORS origins (e.g., ["http://localhost:3000"]).
@@ -93,13 +96,25 @@ def create_app(
     return app
 
 
+def _require_aiosqlite() -> None:
+    """Fail at create_app() time — not at app startup — when aiosqlite is missing."""
+    if find_spec("aiosqlite") is None:
+        raise ImportError(
+            "SQLite persistence requires aiosqlite, which is not installed. "
+            "Either install it with: pip install 'fg-agents[sqlite]' — "
+            "or pass db_url='memory' for in-memory persistence."
+        )
+
+
 def _resolve_repo(db_url: str | None):
     """Pick the right persistence backend from a URL string."""
     if not db_url:
+        _require_aiosqlite()
         return create_repository("sqlite", db_path="fg_agents.db")
     if "postgres" in db_url or "postgresql" in db_url:
         return create_repository("postgres", db_url=db_url)
     if "sqlite" in db_url:
+        _require_aiosqlite()
         path = db_url.split("///", 1)[-1] if "///" in db_url else db_url
         return create_repository("sqlite", db_path=path)
     if db_url == "memory":

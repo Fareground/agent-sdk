@@ -39,7 +39,9 @@ repo = create_repository("postgres", db_url="postgresql+asyncpg://user:pass@host
 `create_app` picks the backend from the URL string:
 
 - `db_url=None` → SQLite file `fg_agents.db` (dev default — needs
-  `fg-agents[sqlite]` installed)
+  `fg-agents[sqlite]` installed; without aiosqlite, `create_app()` raises
+  `ImportError` immediately with the fix — install the extra or pass
+  `db_url="memory"`)
 - URL containing `postgres`/`postgresql` → PostgreSQL
 - URL containing `sqlite` → SQLite at the path after `///`
 - `"memory"` → in-memory
