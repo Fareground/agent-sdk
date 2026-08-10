@@ -20,7 +20,13 @@ Core concepts:
 - StreamEvent: Real-time SSE events with reconnection support
 - UserContext: Multi-tenant user/org context from HTTP headers
 
-Quick start::
+Quick start (one API key env var set is all it takes)::
+
+    from fg_agents import ask
+
+    print(await ask("What's 2+2?"))
+
+Web app::
 
     from fg_agents import create_app, AgentDefinition, tool, ToolRegistry
 
@@ -65,6 +71,7 @@ except PackageNotFoundError:  # editable/source checkout without install metadat
     __version__ = "0.0.0.dev0"
 
 from fg_agents.agent import Agent, AgentRunError, AgentRunResult
+from fg_agents.ask import ask, stream
 from fg_agents.core.engine import AgentEngine
 from fg_agents.core.errors import (
     AgentFrameworkError,
@@ -119,6 +126,7 @@ from fg_agents.middleware.loop_guard import LoopGuardConfig, LoopGuardMiddleware
 from fg_agents.middleware.permissions import PermissionMiddleware, PermissionRule
 from fg_agents.middleware.rate_limit import RateLimitMiddleware
 from fg_agents.middleware.token_tracking import TokenTrackingMiddleware
+from fg_agents.model_detection import ModelDetectionError, resolve_default_model
 from fg_agents.orchestrator.orchestrator import Orchestrator
 from fg_agents.orchestrator.sub_agent import SubAgentRunner
 from fg_agents.persistence.base import BaseRepository
@@ -191,6 +199,11 @@ except ImportError as e:
     get_user_context = _fastapi_not_installed  # type: ignore[assignment,misc]
 
 __all__ = [
+    # One-shot
+    "ask",
+    "stream",
+    "resolve_default_model",
+    "ModelDetectionError",
     # Facade
     "Agent",
     "AgentRunError",

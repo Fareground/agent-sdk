@@ -51,8 +51,8 @@ What it deliberately does **not** do:
   body. (Omit it and the API runs as a single shared tenant for local/dev — it
   warns loudly so you never ship that by accident.)
 - **The model** — it talks to OpenAI, Anthropic, Google, and local models via
-  Ollama. You bring the API key and choose the model at runtime; there is no
-  default.
+  Ollama. You bring the API key; pick any model at runtime, or let the
+  framework detect a sensible default from your environment.
 - **The frontend** — you build the chat UI; the framework streams events to it.
 
 > **Package names.** The distribution is published as **`fg-agents`** and the
@@ -74,47 +74,54 @@ Requires Python 3.11+.
 
 ## Quickstart
 
-The `Agent` facade is one object that wires the LLM client, tool registry,
-persistence, and engine for you:
+With one API key env var set (`export ANTHROPIC_API_KEY=...`), this is the
+whole program:
 
 ```python
-import asyncio
-from fg_agents import Agent
+from fg_agents import ask
 
-async def main():
-    agent = Agent(model="anthropic:claude-sonnet-4-6")
-    print(await agent.run("Say hello in one sentence."))
-
-asyncio.run(main())
+print(await ask("What's 2+2?"))
 ```
 
-Set the provider's API key first (`export ANTHROPIC_API_KEY=...`, or
-`OPENAI_API_KEY` with `model="openai:gpt-5.2"`, etc.). No key? Run a local
-model for free with [Ollama](https://ollama.com):
-`ollama pull qwen3:8b`, then `model="ollama:qwen3:8b"`.
+`ask()` detects the provider from your environment — `ANTHROPIC_API_KEY`,
+then `OPENAI_API_KEY`, then `GOOGLE_API_KEY`/`GEMINI_API_KEY`, then a local
+[Ollama](https://ollama.com) server — and picks a current model for it. Pass
+`model="provider:model"` to override. It takes tools, a system prompt, and a
+memory backend too, and `stream()` is its streaming twin:
 
-Add tools by passing plain functions — the schema is derived from the
-signature and docstring:
+```python
+from fg_agents import ask, stream
+
+answer = await ask("Greet Ada.", tools=[greet], system_prompt="Be friendly.")
+
+async for event in stream("Tell me a story"):
+    print(event.type, event.data)
+```
+
+### Conversations: the `Agent` facade
+
+`ask()` is one-shot. For multi-turn conversations, the `Agent` facade is one
+object that wires the LLM client, tool registry, persistence, and engine —
+usable as an async context manager. Tools are plain functions; the schema is
+derived from the signature and docstring:
 
 ```python
 def greet(name: str) -> str:
     """Greet someone by name."""
     return f"Hello, {name}!"
 
-agent = Agent(
-    model="anthropic:claude-sonnet-4-6",
-    tools=[greet],
+async with Agent(
+    tools=[greet],                    # model= optional — auto-detected
     system_prompt="You are a friendly greeter.",
     memory="sqlite",   # persist sessions; "memory" (default) or "postgres:<url>"
-)
-
-result = await agent.run("Please greet Ada.")   # -> AgentRunResult(.text, .session_id, .events)
-
-async for event in agent.stream("Tell me more"):  # raw StreamEvents as they happen
-    print(event.type, event.data)
+) as agent:
+    first = await agent.run("Please greet Ada.")
+    second = await agent.run("Now greet Grace.")  # same conversation
 ```
 
-Any failure in `run()` — an engine error event or a raised exception — surfaces
+`run()` returns an `AgentRunResult` (`.text`, `.session_id`, `.events` —
+`str()` is the answer text), and `agent.stream()` yields raw `StreamEvent`s
+as they happen. Any failure in `run()` — an engine error event or a raised exception — surfaces
 as a single `AgentRunError` carrying the `session_id` and the partial `events`,
 with the original exception chained as `__cause__`. Each `Agent` instance keeps
 one conversation by default; pass `session_id=` per call to target another.
@@ -265,7 +272,7 @@ src/fg_agents/
     app.py         create_app() application factory
 examples/          Five runnable apps + frontend SSE clients
 docs/              Reference docs: API, streaming wire format, persistence
-tests/             290+ tests
+tests/             Test suite
 ```
 
 ## Contributing

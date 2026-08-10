@@ -3,6 +3,8 @@
 The headline public symbols, all importable from `fg_agents`. This covers the
 surface most apps touch; the full export list is in `src/fg_agents/__init__.py`.
 
+- [One-shot: `ask` / `stream`](#one-shot-ask--stream)
+- [Model auto-detection: `resolve_default_model`](#model-auto-detection)
 - [Agent (facade)](#agent-facade)
 - [AgentRunResult / AgentRunError](#agentrunresult)
 - [AgentDefinition](#agentdefinition)
@@ -13,6 +15,64 @@ surface most apps touch; the full export list is in `src/fg_agents/__init__.py`.
 - [Web layer: `create_app`](#web-layer)
 - [Streaming: StreamEvent / EventType](#streaming)
 - [Middleware](#middleware)
+
+---
+
+## One-shot: `ask` / `stream`
+
+Free functions for one-shot use — no client object. Each constructs an
+ephemeral `Agent`, runs the prompt, and closes it.
+
+```python
+from fg_agents import ask
+
+print(await ask("What's 2+2?"))
+```
+
+```python
+async def ask(
+    prompt: str,
+    *,
+    model: str | None = None,        # omit to auto-detect from the environment
+    tools: list[Callable | RegisteredTool] | None = None,
+    system_prompt: str = "",
+    memory: str | BaseRepository = "memory",
+    **kwargs,                        # anything else Agent accepts
+) -> AgentRunResult
+```
+
+`str()` of the result is the answer text, so `print(await ask(...))` prints
+just the answer.
+
+`stream(prompt, ...)` takes the same arguments and yields `StreamEvent`s as
+they happen; the ephemeral agent is closed when the stream ends:
+
+```python
+from fg_agents import stream
+
+async for event in stream("Tell me a story"):
+    print(event.type, event.data)
+```
+
+The ladder: `ask()` for one-shots → `Agent` for conversations →
+`AgentEngine` and friends for full control.
+
+---
+
+## Model auto-detection
+
+`resolve_default_model() -> str` picks a provider-qualified default model
+from the environment. It runs whenever `ask()`, `stream()`, or `Agent()` is
+called without a `model`. Detection order:
+
+1. `ANTHROPIC_API_KEY` → `anthropic:claude-sonnet-4-6`
+2. `OPENAI_API_KEY` → `openai:gpt-5.2`
+3. `GOOGLE_API_KEY` or `GEMINI_API_KEY` → `google:gemini-2.5-flash`
+4. A local Ollama server on `localhost:11434` → `ollama:qwen3:8b`
+
+If none apply it raises `ModelDetectionError` (importable from `fg_agents`)
+with instructions. An explicit `model=` always wins — detection never
+overrides a caller's choice.
 
 ---
 
@@ -32,7 +92,7 @@ result = await agent.run("hello")
 
 ```python
 Agent(
-    model: str,                                   # provider-qualified, e.g. "openai:gpt-5.2" — required
+    model: str | None = None,                     # provider-qualified, e.g. "openai:gpt-5.2"; None = auto-detect
     *,
     tools: list[Callable | RegisteredTool] | None = None,
     system_prompt: str = "",
@@ -60,6 +120,14 @@ explicit `await repo.initialize()`.)
 | `await run(message, *, session_id=None, metadata=None, variables=None)` | `AgentRunResult` | Runs to completion. Continues the instance's conversation unless `session_id` is passed. |
 | `stream(message, *, session_id=None, metadata=None, variables=None)` | `AsyncIterator[StreamEvent]` | Yields raw events as they happen. |
 | `await close()` | `None` | Closes the repository; the Agent is unusable afterwards. |
+
+`Agent` is also an async context manager — `async with Agent(...) as agent:`
+closes it on exit:
+
+```python
+async with Agent(tools=[greet]) as agent:
+    result = await agent.run("hello")
+```
 
 ### Failure contract
 

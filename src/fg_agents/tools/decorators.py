@@ -49,6 +49,39 @@ def _python_type_to_json(tp: Any) -> str:
     return _TYPE_MAP.get(tp, "string")
 
 
+def _docstring_param_descriptions(fn: Callable) -> dict[str, str]:
+    """
+    Extract per-parameter descriptions from a Google-style ``Args:`` section.
+
+    Recognizes lines like ``name: description`` or ``name (int): description``
+    under an ``Args:``/``Arguments:``/``Parameters:`` heading. Best-effort —
+    anything unparseable is simply skipped.
+    """
+    doc = inspect.getdoc(fn) or ""
+    descriptions: dict[str, str] = {}
+    in_args = False
+    current: str | None = None
+    for raw in doc.splitlines():
+        line = raw.strip()
+        if line.lower().rstrip(":") in ("args", "arguments", "parameters") and line.endswith(":"):
+            in_args = True
+            continue
+        if not in_args:
+            continue
+        if not line or (line.endswith(":") and ":" not in line[:-1]):
+            break  # blank line or next section heading ends the Args block
+        if ":" in line and not raw.startswith((" " * 8, "\t\t")):
+            name_part, _, desc = line.partition(":")
+            name = name_part.split("(")[0].strip()
+            if name.isidentifier():
+                descriptions[name] = desc.strip()
+                current = name
+                continue
+        if current:  # continuation line of the previous description
+            descriptions[current] = f"{descriptions[current]} {line}".strip()
+    return descriptions
+
+
 def _build_json_schema(fn: Callable) -> dict[str, Any]:
     """
     Introspect function signature to build JSON Schema for tool parameters.
@@ -56,6 +89,7 @@ def _build_json_schema(fn: Callable) -> dict[str, Any]:
     """
     hints = get_type_hints(fn)
     sig = inspect.signature(fn)
+    doc_descriptions = _docstring_param_descriptions(fn)
 
     properties = {}
     required = []
@@ -77,8 +111,8 @@ def _build_json_schema(fn: Callable) -> dict[str, Any]:
             if param.default is inspect.Parameter.empty:
                 required.append(param_name)
 
-        # Use the parameter name as description by default
-        prop["description"] = param_name.replace("_", " ")
+        # Prefer the docstring's Args description; fall back to the name
+        prop["description"] = doc_descriptions.get(param_name) or param_name.replace("_", " ")
 
         properties[param_name] = prop
 
@@ -110,6 +144,12 @@ def tool(
 
     The decorated function gains a `.tool_definition` attribute containing
     the RegisteredTool instance, which can be added to a ToolRegistry.
+
+    The JSON schema is inferred from the signature: type hints map to JSON
+    types (str/int/float/bool/list/dict, Optional unwrapped), defaults are
+    recorded and make a parameter optional, and per-parameter descriptions
+    are pulled from a Google-style ``Args:`` docstring section when present.
+    A plain type-hinted function needs nothing more.
 
     Parameters named 'ctx' or 'context' with type ExecutionContext are
     automatically injected by the framework — they don't appear in the

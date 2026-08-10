@@ -28,6 +28,7 @@ from fg_agents.core.engine import AgentEngine
 from fg_agents.core.errors import AgentFrameworkError
 from fg_agents.core.llm import AgentLLM
 from fg_agents.core.types import AgentDefinition, EventType, RegisteredTool
+from fg_agents.model_detection import env_api_key_overrides, resolve_default_model
 from fg_agents.persistence.base import BaseRepository
 from fg_agents.persistence.factory import create_repository
 from fg_agents.streaming.events import StreamEvent
@@ -67,6 +68,9 @@ class Agent:
 
     Args:
         model: Provider-qualified model id, e.g. ``"anthropic:claude-sonnet-4-6"``.
+            When omitted (``None``), a default is detected from the
+            environment — see :func:`fg_agents.resolve_default_model` for
+            the detection order.
         tools: Tools available to the agent. Accepts ``@tool``-decorated
             functions, plain callables (auto-wrapped via ``@tool``), or
             ``RegisteredTool`` instances.
@@ -88,7 +92,7 @@ class Agent:
 
     def __init__(
         self,
-        model: str,
+        model: str | None = None,
         *,
         tools: list[Callable | RegisteredTool] | None = None,
         system_prompt: str = "",
@@ -99,7 +103,12 @@ class Agent:
         session_id: str | None = None,
         **agent_kwargs,
     ):
-        self._llm = llm or AgentLLM(api_keys=api_keys)
+        if model is None:
+            model = resolve_default_model()
+        if llm is None:
+            merged_keys = {**env_api_key_overrides(), **(api_keys or {})}
+            llm = AgentLLM(api_keys=merged_keys or None)
+        self._llm = llm
         self._repository = self._resolve_repository(memory)
         self._registry = ToolRegistry()
         for t in tools or []:
@@ -250,6 +259,12 @@ class Agent:
             variables=variables,
         ):
             yield event
+
+    async def __aenter__(self) -> "Agent":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
 
     async def close(self) -> None:
         """Close the underlying repository. The Agent is unusable afterwards."""

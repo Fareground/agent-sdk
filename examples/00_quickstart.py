@@ -1,13 +1,14 @@
 """
 00 — Quickstart
 
-The fastest way in: the Agent facade. One object, no wiring —
-LLM, tools, persistence, and the engine are set up for you.
+The fastest way in: the ask() one-shot. With an API key env var set
+(ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY — or a local Ollama
+server running), the model is detected for you.
 """
 
 import asyncio
 
-from fg_agents import Agent
+from fg_agents import Agent, ask
 
 
 def greet(name: str) -> str:
@@ -16,14 +17,16 @@ def greet(name: str) -> str:
 
 
 async def main():
-    agent = Agent(
-        model="anthropic:claude-sonnet-4-6",  # any provider:model you have a key for
-        tools=[greet],
-        system_prompt="You are a friendly greeter.",
-    )
+    # One-shot: three lines is the whole program.
+    print(await ask("What's 2+2?"))
 
-    result = await agent.run("Please greet Ada.")
-    print(result.text)
+    # Same thing with tools and a system prompt:
+    print(await ask("Please greet Ada.", tools=[greet], system_prompt="You are a friendly greeter."))
+
+    # Multi-turn: graduate to the Agent facade (still no wiring).
+    async with Agent(tools=[greet], system_prompt="You are a friendly greeter.") as agent:
+        print(await agent.run("Greet Grace."))
+        print(await agent.run("Who did you just greet?"))  # same conversation
 
 
 if __name__ == "__main__":
