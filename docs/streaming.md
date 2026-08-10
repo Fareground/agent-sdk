@@ -56,9 +56,6 @@ Listed in the order a typical run emits them.
 | `session.completed` | `total_turns`, `input_tokens`, `output_tokens`, `final_output` | The run finished successfully. `final_output` is the complete assistant reply. |
 | `error` | `error_type`, `message` (truncated to 1000 chars), `recoverable` | Something failed. If `recoverable` is true the session can continue. |
 
-> `llm.response_complete` exists in the `EventType` enum but is not currently
-> emitted by the engine; don't build UI on it.
-
 ## A minimal frontend loop
 
 ```js

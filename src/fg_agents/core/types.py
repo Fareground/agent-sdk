@@ -55,7 +55,6 @@ class EventType(str, Enum):
     LLM_THINKING = "llm.thinking"
     LLM_TEXT_DELTA = "llm.text_delta"
     LLM_TOOL_CALL = "llm.tool_call"
-    LLM_RESPONSE_COMPLETE = "llm.response_complete"
     TOOL_EXECUTING = "tool.executing"
     TOOL_RESULT = "tool.result"
     SUBAGENT_STARTED = "subagent.started"
