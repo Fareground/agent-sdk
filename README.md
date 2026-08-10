@@ -62,24 +62,54 @@ What it deliberately does **not** do:
 
 ## Install
 
+The core install is deliberately slim — engine, tools, `ask`/`Agent`, and
+in-memory persistence. Everything else is an extra:
+
 ```bash
-pip install git+https://github.com/Fareground/agent-framework.git                 # core (FastAPI + PostgreSQL)
+pip install git+https://github.com/Fareground/agent-framework.git                 # core (engine + tools + in-memory persistence)
+pip install "fg-agents[web] @ git+https://github.com/Fareground/agent-framework.git"        # + FastAPI app/router (create_app)
+pip install "fg-agents[postgres] @ git+https://github.com/Fareground/agent-framework.git"   # + PostgreSQL backend (SQLAlchemy + asyncpg)
 pip install "fg-agents[sqlite] @ git+https://github.com/Fareground/agent-framework.git"     # + SQLite backend
-pip install "fg-agents[openai] @ git+https://github.com/Fareground/agent-framework.git"     # + OpenAI provider
+pip install "fg-agents[openai] @ git+https://github.com/Fareground/agent-framework.git"     # + OpenAI (and OpenAI-compatible) providers
 pip install "fg-agents[anthropic] @ git+https://github.com/Fareground/agent-framework.git"  # + Anthropic provider
-pip install "fg-agents[all] @ git+https://github.com/Fareground/agent-framework.git"        # everything (all providers + scheduler)
+pip install "fg-agents[google] @ git+https://github.com/Fareground/agent-framework.git"     # + Google Gemini provider
+pip install "fg-agents[all] @ git+https://github.com/Fareground/agent-framework.git"        # everything (web + postgres + sqlite + all providers + scheduler)
 ```
+
+| Extra | Adds | You need it for |
+|---|---|---|
+| *(none)* | — | `ask`/`Agent`, tools, engine, in-memory persistence |
+| `web` | fastapi, uvicorn | `create_app`, `create_agent_router`, the HTTP/SSE API |
+| `postgres` | sqlalchemy, asyncpg | `PostgresRepository`, `memory="postgres:<url>"` |
+| `sqlite` | aiosqlite | `SQLiteRepository`, `memory="sqlite"` |
+| `anthropic` / `openai` / `google` | provider SDK | that provider (`openai` also covers Ollama, Groq, and every other OpenAI-compatible provider) |
+| `scheduler` | croniter, sqlalchemy | `AgentScheduler` |
 
 Requires Python 3.11+.
 
 ## Quickstart
 
-With one API key env var set (`export ANTHROPIC_API_KEY=...`), this is the
+With one API key env var set (`export ANTHROPIC_API_KEY=...`) and the matching
+provider extra installed (`pip install "fg-agents[anthropic]"`), this is the
 whole program:
 
 ```python
+import asyncio
+
 from fg_agents import ask
 
+
+async def main():
+    print(await ask("What's 2+2?"))
+
+
+asyncio.run(main())
+```
+
+Already inside async code — or in a REPL with top-level await (`python -m
+asyncio`, IPython, Jupyter)? Then it's just:
+
+```python
 print(await ask("What's 2+2?"))
 ```
 
