@@ -28,8 +28,13 @@ def test_parse_model_string():
     assert _parse_model_string("ollama:qwen3.5:9b") == ("ollama", "qwen3.5:9b")
     # No prefix — splits on first colon (ambiguous, use explicit prefix)
     assert _parse_model_string("qwen3.5:9b") == ("qwen3.5", "9b")
-    # Simple model name without colon defaults to ollama
-    assert _parse_model_string("llama3") == ("ollama", "llama3")
+    # A bare model name without a provider prefix is rejected loudly
+    with pytest.raises(ValueError) as exc:
+        _parse_model_string("llama3")
+    msg = str(exc.value)
+    assert "provider:model" in msg
+    for provider in ("openai", "anthropic", "google", "ollama"):
+        assert provider in msg
 
 
 def test_api_key_from_dict():

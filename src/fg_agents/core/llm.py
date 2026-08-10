@@ -10,6 +10,7 @@ No default model — user must specify.
 """
 
 import asyncio
+import importlib.util
 import json
 import time
 from collections.abc import AsyncIterator
@@ -33,11 +34,63 @@ log = structlog.get_logger("fg_agents.llm")
 
 
 def _parse_model_string(model: str) -> tuple[str, str]:
-    """Parse 'provider:model_name' into (provider, model_name)."""
+    """Parse 'provider:model_name' into (provider, model_name).
+
+    A model string without a provider prefix is ambiguous (silently routing
+    it to any one provider hides misconfiguration), so it is rejected.
+    """
     if ":" in model:
         provider, model_name = model.split(":", 1)
         return provider.lower(), model_name
-    return "ollama", model
+    known = ", ".join(sorted({"anthropic", "google", *OPENAI_COMPATIBLE_PROVIDERS}))
+    raise ValueError(
+        f"Invalid model string '{model}': expected 'provider:model' "
+        f"(e.g. 'openai:gpt-5.2', 'anthropic:claude-sonnet-4-6', 'ollama:qwen3:8b'). "
+        f"Known providers: {known}."
+    )
+
+
+def _provider_requirement(provider: str) -> tuple[str, str, str] | None:
+    """(import_module, pip_package, extra) needed for a provider, or None if unknown.
+
+    Unknown/custom providers are not probed here — they resolve to the
+    OpenAI-compatible client at call time, which performs its own check.
+    """
+    if provider == "anthropic":
+        return ("anthropic", "anthropic", "anthropic")
+    if provider == "google":
+        return ("google.genai", "google-genai", "google")
+    if provider in OPENAI_COMPATIBLE_PROVIDERS:
+        # All OpenAI-compatible providers (incl. local runners like ollama)
+        # are reached through the openai client package.
+        return ("openai", "openai", "openai")
+    return None
+
+
+def _module_available(module: str) -> bool:
+    """True when a module can be found. A raising finder counts as missing."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except ImportError:
+        return False
+
+
+def require_provider_package(provider: str) -> None:
+    """Raise a clean, actionable ImportError when a provider's SDK is missing.
+
+    Called eagerly at Agent construction and again at client creation, so a
+    missing optional dependency surfaces as one clear line instead of a
+    ModuleNotFoundError deep inside the engine.
+    """
+    requirement = _provider_requirement(provider)
+    if requirement is None:
+        return
+    module, pip_package, extra = requirement
+    if not _module_available(module):
+        raise ImportError(
+            f"The {provider} provider requires the '{pip_package}' package — "
+            f"pip install 'fg-agents[{extra}]'"
+        )
 
 
 def _messages_to_anthropic(
@@ -361,6 +414,15 @@ class AgentLLM:
             if provider in self._clients:
                 return self._clients[provider]
             api_key = self._get_api_key(provider)
+            try:
+                # Custom providers not in the registry also ride the openai client.
+                require_provider_package(
+                    provider if _provider_requirement(provider) else "openai"
+                )
+            except ImportError as e:
+                # A missing SDK is a config problem, not an internal failure —
+                # surface it as a clean, non-retryable LLMError (no stack dump).
+                raise LLMError(str(e), provider=provider, model="", retryable=False) from e
             if provider == "anthropic":
                 import anthropic
 
@@ -410,7 +472,10 @@ class AgentLLM:
                 model="",
                 retryable=False,
             )
-        provider, model_name = _parse_model_string(model)
+        try:
+            provider, model_name = _parse_model_string(model)
+        except ValueError as e:
+            raise LLMError(str(e), provider="", model=model, retryable=False) from None
 
         if provider == "anthropic":
             async for chunk in self._stream_anthropic(
@@ -452,7 +517,10 @@ class AgentLLM:
                 model="",
                 retryable=False,
             )
-        provider, model_name = _parse_model_string(model)
+        try:
+            provider, model_name = _parse_model_string(model)
+        except ValueError as e:
+            raise LLMError(str(e), provider="", model=model, retryable=False) from None
 
         if provider == "anthropic":
             return await self._complete_anthropic(

@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 
 from fg_agents.core.engine import AgentEngine
 from fg_agents.core.errors import AgentFrameworkError
-from fg_agents.core.llm import AgentLLM
+from fg_agents.core.llm import AgentLLM, _parse_model_string, require_provider_package
 from fg_agents.core.types import AgentDefinition, EventType, RegisteredTool
 from fg_agents.model_detection import env_api_key_overrides, resolve_default_model
 from fg_agents.persistence.base import BaseRepository
@@ -103,16 +103,25 @@ class Agent:
         session_id: str | None = None,
         **agent_kwargs,
     ):
-        if model is None:
-            model = resolve_default_model()
-        if llm is None:
-            merged_keys = {**env_api_key_overrides(), **(api_keys or {})}
-            llm = AgentLLM(api_keys=merged_keys or None)
-        self._llm = llm
+        # Validate cheap, local configuration (memory backend, tools) before
+        # model detection — a bogus memory string should be reported as such,
+        # not masked by a ModelDetectionError about missing API keys.
         self._repository = self._resolve_repository(memory)
         self._registry = ToolRegistry()
         for t in tools or []:
             self._register_tool(t)
+
+        if model is None:
+            model = resolve_default_model()
+        # Fail at construction — with an actionable install hint — when the
+        # provider's SDK isn't installed, instead of deep inside the first run.
+        provider, _ = _parse_model_string(model)
+        require_provider_package(provider)
+
+        if llm is None:
+            merged_keys = {**env_api_key_overrides(), **(api_keys or {})}
+            llm = AgentLLM(api_keys=merged_keys or None)
+        self._llm = llm
 
         self._definition = AgentDefinition(
             name=name,

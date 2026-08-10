@@ -98,6 +98,27 @@ def test_postgres_memory_requires_url():
         Agent(model="mock:test", memory="postgres")
 
 
+def test_bogus_memory_reported_before_model_detection(monkeypatch):
+    # With no API keys and a bad memory backend, the error must be about the
+    # memory backend — not a ModelDetectionError about missing providers.
+    for var in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(ValueError, match="memory backend"):
+        Agent(memory="redis")
+
+
+def test_missing_provider_package_fails_at_construction():
+    # The dev environment deliberately has no provider SDKs installed, so a
+    # provider-qualified model must fail eagerly with the install hint.
+    with pytest.raises(ImportError, match=r"fg-agents\[anthropic\]"):
+        Agent(model="anthropic:claude-sonnet-4-6")
+
+
+def test_bare_model_string_rejected_at_construction():
+    with pytest.raises(ValueError, match="provider:model"):
+        Agent(model="gpt-5")
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Run / stream round-trips (lazy init — no explicit initialize call)
 # ══════════════════════════════════════════════════════════════════════

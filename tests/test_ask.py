@@ -3,6 +3,7 @@ Tests for the one-shot free functions (ask/stream) and model auto-detection.
 """
 import pytest
 
+import fg_agents.agent
 import fg_agents.model_detection as model_detection
 from fg_agents import (
     Agent,
@@ -192,6 +193,7 @@ async def test_ask_resolves_model_via_async_probe(clean_env, capture_agent):
 
     clean_env.setattr(model_detection, "_probe_ollama_sync", sync_probe_forbidden)
     clean_env.setattr(model_detection, "_probe_ollama_async", async_probe)
+    clean_env.setattr(fg_agents.agent, "require_provider_package", lambda provider: None)
     llm = MockLLM([make_text_response("ok")])
     result = await ask("hi", llm=llm)
     assert result.text == "ok"
@@ -240,6 +242,7 @@ def test_detection_friendly_error(clean_env):
 
 def test_agent_uses_detected_model(clean_env):
     clean_env.setenv("ANTHROPIC_API_KEY", "sk-ant")
+    clean_env.setattr(fg_agents.agent, "require_provider_package", lambda provider: None)
     agent = Agent()
     assert agent.definition.model == "anthropic:claude-sonnet-4-6"
 

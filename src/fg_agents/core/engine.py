@@ -23,6 +23,7 @@ from typing import Any
 import structlog
 
 from fg_agents.core.errors import (
+    AgentFrameworkError,
     ContextOverflowError,
     LLMError,
     LLMRateLimitError,
@@ -848,7 +849,13 @@ class AgentEngine:
             )
 
         except Exception as e:
-            log.exception("engine_error", session_id=session_id)
+            if isinstance(e, AgentFrameworkError):
+                # Framework errors carry a clean, user-facing message (bad
+                # config, missing provider package, ...) — log one line, no
+                # stack dump. Stack logging is reserved for genuine bugs.
+                log.error("engine_error", session_id=session_id, error=str(e)[:500])
+            else:
+                log.exception("engine_error", session_id=session_id)
             await self._repo.update_session(
                 session_id,
                 status=SessionStatus.FAILED,
