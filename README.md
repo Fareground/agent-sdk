@@ -98,6 +98,9 @@ async for event in stream("Tell me a story"):
     print(event.type, event.data)
 ```
 
+If you might break out of a `stream()` loop early, wrap it in
+`contextlib.aclosing(...)` so the ephemeral agent is closed deterministically.
+
 ### Conversations: the `Agent` facade
 
 `ask()` is one-shot. For multi-turn conversations, the `Agent` facade is one

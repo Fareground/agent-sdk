@@ -22,8 +22,28 @@ _ENV_VARS = ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GOOGLE_API_KEY", "GEMINI_AP
 def clean_env(monkeypatch):
     for var in _ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(model_detection, "_ollama_running", lambda: False)
+    monkeypatch.setattr(model_detection, "_probe_cached_at", None)
+    monkeypatch.setattr(model_detection, "_probe_ollama_sync", lambda: False)
+
+    async def no_async_probe():
+        return False
+
+    monkeypatch.setattr(model_detection, "_probe_ollama_async", no_async_probe)
     return monkeypatch
+
+
+@pytest.fixture
+def capture_agent(monkeypatch):
+    """Spy on Agent construction so tests can inspect the ephemeral agent."""
+    captured = {}
+    original_init = Agent.__init__
+
+    def spy_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        captured["agent"] = self
+
+    monkeypatch.setattr(Agent, "__init__", spy_init)
+    return captured
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -40,23 +60,10 @@ async def test_ask_happy_path():
 
 
 @pytest.mark.asyncio
-async def test_ask_cleans_up_repository():
+async def test_ask_cleans_up_repository(capture_agent):
     llm = MockLLM([make_text_response("done")])
-    captured = {}
-
-    original_init = Agent.__init__
-
-    def spy_init(self, *args, **kwargs):
-        original_init(self, *args, **kwargs)
-        captured["agent"] = self
-
-    Agent.__init__ = spy_init
-    try:
-        await ask("hi", model="mock:test", llm=llm)
-    finally:
-        Agent.__init__ = original_init
-
-    agent = captured["agent"]
+    await ask("hi", model="mock:test", llm=llm)
+    agent = capture_agent["agent"]
     assert agent._closed
     with pytest.raises(RuntimeError, match="closed"):
         await agent.run("again")
@@ -84,6 +91,24 @@ async def test_stream_free_function_yields_events():
     assert EventType.SESSION_COMPLETED in types
     completed = next(e for e in events if e.type == EventType.SESSION_COMPLETED)
     assert completed.data.get("final_output") == "hello there"
+
+
+@pytest.mark.asyncio
+async def test_stream_exhaustion_closes_agent(capture_agent):
+    llm = MockLLM([make_text_response("bye")])
+    async for _ in stream("hi", model="mock:test", llm=llm):
+        pass
+    assert capture_agent["agent"]._closed
+
+
+@pytest.mark.asyncio
+async def test_stream_early_aclose_closes_agent(capture_agent):
+    llm = MockLLM([make_text_response("long story")])
+    gen = stream("hi", model="mock:test", llm=llm)
+    first = await anext(gen)
+    assert first is not None
+    await gen.aclose()
+    assert capture_agent["agent"]._closed
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -139,9 +164,70 @@ def test_detection_gemini_alias(clean_env):
     assert model_detection.env_api_key_overrides() == {"google": "g-key"}
 
 
-def test_detection_ollama_fallback(clean_env, monkeypatch):
-    monkeypatch.setattr(model_detection, "_ollama_running", lambda: True)
+def test_detection_ollama_fallback(clean_env):
+    clean_env.setattr(model_detection, "_probe_ollama_sync", lambda: True)
     assert resolve_default_model() == "ollama:qwen3:8b"
+
+
+@pytest.mark.asyncio
+async def test_async_detection_never_calls_sync_probe(clean_env):
+    def sync_probe_forbidden():
+        raise AssertionError("sync socket probe must not run on the async path")
+
+    async def async_probe():
+        return True
+
+    clean_env.setattr(model_detection, "_probe_ollama_sync", sync_probe_forbidden)
+    clean_env.setattr(model_detection, "_probe_ollama_async", async_probe)
+    assert await model_detection.resolve_default_model_async() == "ollama:qwen3:8b"
+
+
+@pytest.mark.asyncio
+async def test_ask_resolves_model_via_async_probe(clean_env, capture_agent):
+    def sync_probe_forbidden():
+        raise AssertionError("sync socket probe must not run inside ask()")
+
+    async def async_probe():
+        return True
+
+    clean_env.setattr(model_detection, "_probe_ollama_sync", sync_probe_forbidden)
+    clean_env.setattr(model_detection, "_probe_ollama_async", async_probe)
+    llm = MockLLM([make_text_response("ok")])
+    result = await ask("hi", llm=llm)
+    assert result.text == "ok"
+    assert capture_agent["agent"].definition.model == "ollama:qwen3:8b"
+
+
+def test_probe_result_cached(clean_env):
+    calls = {"n": 0}
+
+    def counting_probe():
+        calls["n"] += 1
+        return True
+
+    clean_env.setattr(model_detection, "_probe_ollama_sync", counting_probe)
+    assert resolve_default_model() == "ollama:qwen3:8b"
+    assert resolve_default_model() == "ollama:qwen3:8b"
+    assert calls["n"] == 1  # second call served from the cache
+
+
+def test_probe_cache_expires(clean_env):
+    calls = {"n": 0}
+    clock = {"now": 1000.0}
+
+    def counting_probe():
+        calls["n"] += 1
+        return True
+
+    clean_env.setattr(model_detection, "_probe_ollama_sync", counting_probe)
+    clean_env.setattr(model_detection.time, "monotonic", lambda: clock["now"])
+    resolve_default_model()
+    clock["now"] += model_detection._PROBE_CACHE_TTL - 1
+    resolve_default_model()
+    assert calls["n"] == 1  # still within TTL
+    clock["now"] += 2
+    resolve_default_model()
+    assert calls["n"] == 2  # TTL elapsed — re-probed
 
 
 def test_detection_friendly_error(clean_env):

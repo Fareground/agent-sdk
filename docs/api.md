@@ -45,13 +45,27 @@ async def ask(
 just the answer.
 
 `stream(prompt, ...)` takes the same arguments and yields `StreamEvent`s as
-they happen; the ephemeral agent is closed when the stream ends:
+they happen; the ephemeral agent is closed when the stream is exhausted or
+the generator's `aclose()` runs:
 
 ```python
 from fg_agents import stream
 
 async for event in stream("Tell me a story"):
     print(event.type, event.data)
+```
+
+If you might exit early (`break`/`return` mid-iteration), wrap the stream in
+`contextlib.aclosing` so cleanup runs deterministically instead of waiting
+for garbage collection:
+
+```python
+import contextlib
+
+async with contextlib.aclosing(stream("Tell me a story")) as events:
+    async for event in events:
+        if enough(event):
+            break
 ```
 
 The ladder: `ask()` for one-shots → `Agent` for conversations →
@@ -63,7 +77,10 @@ The ladder: `ask()` for one-shots → `Agent` for conversations →
 
 `resolve_default_model() -> str` picks a provider-qualified default model
 from the environment. It runs whenever `ask()`, `stream()`, or `Agent()` is
-called without a `model`. Detection order:
+called without a `model`. `resolve_default_model_async()` is its async twin —
+same order and error, but the Ollama probe never blocks the event loop; it's
+what `ask()`/`stream()` use internally. The probe result is cached briefly so
+repeated constructions don't re-pay the connect timeout. Detection order:
 
 1. `ANTHROPIC_API_KEY` → `anthropic:claude-sonnet-4-6`
 2. `OPENAI_API_KEY` → `openai:gpt-5.2`

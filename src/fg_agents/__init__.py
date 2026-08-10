@@ -126,7 +126,11 @@ from fg_agents.middleware.loop_guard import LoopGuardConfig, LoopGuardMiddleware
 from fg_agents.middleware.permissions import PermissionMiddleware, PermissionRule
 from fg_agents.middleware.rate_limit import RateLimitMiddleware
 from fg_agents.middleware.token_tracking import TokenTrackingMiddleware
-from fg_agents.model_detection import ModelDetectionError, resolve_default_model
+from fg_agents.model_detection import (
+    ModelDetectionError,
+    resolve_default_model,
+    resolve_default_model_async,
+)
 from fg_agents.orchestrator.orchestrator import Orchestrator
 from fg_agents.orchestrator.sub_agent import SubAgentRunner
 from fg_agents.persistence.base import BaseRepository
@@ -203,6 +207,7 @@ __all__ = [
     "ask",
     "stream",
     "resolve_default_model",
+    "resolve_default_model_async",
     "ModelDetectionError",
     # Facade
     "Agent",

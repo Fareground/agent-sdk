@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator, Callable
 
 from fg_agents.agent import Agent, AgentRunResult
 from fg_agents.core.types import RegisteredTool
+from fg_agents.model_detection import resolve_default_model_async
 from fg_agents.persistence.base import BaseRepository
 from fg_agents.streaming.events import StreamEvent
 
@@ -63,6 +64,8 @@ async def ask(
         :class:`~fg_agents.AgentRunResult` — ``str()`` of it is the answer
         text, so ``print(await ask(...))`` prints just the answer.
     """
+    if model is None:
+        model = await resolve_default_model_async()
     async with Agent(
         model, tools=tools, system_prompt=system_prompt, memory=memory, **kwargs
     ) as agent:
@@ -89,10 +92,23 @@ async def stream(
             print(event.type, event.data)
 
     Accepts the same arguments as :func:`ask`. The ephemeral agent is
-    closed when the stream is exhausted (or the iterator is closed).
+    closed when the stream is exhausted or the generator's ``aclose()``
+    runs. If you may exit early (``break``/``return`` mid-iteration), wrap
+    the stream so cleanup is deterministic rather than left to garbage
+    collection::
+
+        import contextlib
+
+        async with contextlib.aclosing(stream("Tell me a story")) as events:
+            async for event in events:
+                if enough(event):
+                    break
     """
-    async with Agent(
-        model, tools=tools, system_prompt=system_prompt, memory=memory, **kwargs
-    ) as agent:
+    if model is None:
+        model = await resolve_default_model_async()
+    agent = Agent(model, tools=tools, system_prompt=system_prompt, memory=memory, **kwargs)
+    try:
         async for event in agent.stream(prompt):
             yield event
+    finally:
+        await agent.close()
