@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://github.com/Fareground/agent-framework/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Fareground/agent-framework/ci.yml?branch=main&style=flat-square&label=CI" /></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+" />
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Alpha" />
+  <a href="https://pypi.org/project/fg-agents/"><img src="https://img.shields.io/pypi/v/fg-agents?style=flat-square" alt="PyPI" /></a>
   <img src="https://img.shields.io/badge/license-Apache--2.0-lightgrey" alt="Apache-2.0" />
 </p>
 
@@ -66,14 +66,14 @@ The core install is deliberately slim — engine, tools, `ask`/`Agent`, and
 in-memory persistence. Everything else is an extra:
 
 ```bash
-pip install git+https://github.com/Fareground/agent-framework.git                 # core (engine + tools + in-memory persistence)
-pip install "fg-agents[web] @ git+https://github.com/Fareground/agent-framework.git"        # + FastAPI app/router (create_app)
-pip install "fg-agents[postgres] @ git+https://github.com/Fareground/agent-framework.git"   # + PostgreSQL backend (SQLAlchemy + asyncpg)
-pip install "fg-agents[sqlite] @ git+https://github.com/Fareground/agent-framework.git"     # + SQLite backend
-pip install "fg-agents[openai] @ git+https://github.com/Fareground/agent-framework.git"     # + OpenAI (and OpenAI-compatible) providers
-pip install "fg-agents[anthropic] @ git+https://github.com/Fareground/agent-framework.git"  # + Anthropic provider
-pip install "fg-agents[google] @ git+https://github.com/Fareground/agent-framework.git"     # + Google Gemini provider
-pip install "fg-agents[all] @ git+https://github.com/Fareground/agent-framework.git"        # everything (web + postgres + sqlite + all providers + scheduler)
+pip install fg-agents                 # core (engine + tools + in-memory persistence)
+pip install "fg-agents[web]"          # + FastAPI app/router (create_app)
+pip install "fg-agents[postgres]"     # + PostgreSQL backend (SQLAlchemy + asyncpg)
+pip install "fg-agents[sqlite]"       # + SQLite backend
+pip install "fg-agents[openai]"       # + OpenAI (and OpenAI-compatible) providers
+pip install "fg-agents[anthropic]"    # + Anthropic provider
+pip install "fg-agents[google]"       # + Google Gemini provider
+pip install "fg-agents[all]"          # everything (web + postgres + sqlite + all providers + scheduler)
 ```
 
 | Extra | Adds | You need it for |
