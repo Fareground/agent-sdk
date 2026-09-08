@@ -673,15 +673,20 @@ class AgentLLM:
             saw_reasoning_channel = False
 
             async for chunk in stream:
+                # Usage is a cumulative provider snapshot, not a token
+                # delta. OpenRouter can attach it to a normal choice;
+                # native OpenAI commonly sends a choices=[] trailer.
+                # Replace totals whenever supplied, then process content
+                # independently so neither is dropped or counted twice.
+                if chunk.usage is not None:
+                    usage_info = LLMUsage(
+                        input_tokens=chunk.usage.prompt_tokens or 0,
+                        output_tokens=chunk.usage.completion_tokens or 0,
+                        total_tokens=chunk.usage.total_tokens or 0,
+                        cache_read_tokens=_openai_cached_tokens(chunk.usage),
+                    )
                 choice = chunk.choices[0] if chunk.choices else None
                 if not choice:
-                    if chunk.usage:
-                        usage_info = LLMUsage(
-                            input_tokens=chunk.usage.prompt_tokens or 0,
-                            output_tokens=chunk.usage.completion_tokens or 0,
-                            total_tokens=chunk.usage.total_tokens or 0,
-                            cache_read_tokens=_openai_cached_tokens(chunk.usage),
-                        )
                     continue
 
                 delta = choice.delta

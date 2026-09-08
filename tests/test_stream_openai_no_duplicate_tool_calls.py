@@ -11,6 +11,7 @@ tool_call_end per call.
 
 import asyncio
 from types import SimpleNamespace
+import pytest
 
 from fg_agents.core.llm import AgentLLM, _ThinkSplitter
 
@@ -91,6 +92,37 @@ def test_stream_openai_emits_each_tool_call_once():
     usage_events = [e for e in events if e.type == "usage"]
     assert len(usage_events) == 1, f"expected 1 usage event, got {len(usage_events)}"
     assert usage_events[0].usage.total_tokens == 15
+
+
+@pytest.mark.parametrize('with_choice', [False, True])
+@pytest.mark.parametrize('tool_call', [False, True])
+@pytest.mark.parametrize('updated_trailer', [False, True])
+def test_usage_snapshots_are_independent_of_choices(with_choice, tool_call, updated_trailer):
+    usage = SimpleNamespace(prompt_tokens=28, completion_tokens=4, total_tokens=32,
+                            prompt_tokens_details=SimpleNamespace(cached_tokens=6))
+    content = _delta(tool_calls=[_tc_delta(0, tid='call_one', name='lookup', args='{}')]) if tool_call else _delta(content='OK')
+    finish = 'tool_calls' if tool_call else 'stop'
+    chunks = [_chunk(content, usage=usage if with_choice else None)]
+    # Repeated finish/usage chunks must not duplicate either tool calls or
+    # the bill. A later authoritative total replaces, rather than adds.
+    chunks.extend([_chunk(finish_reason=finish if with_choice else None, usage=usage)] * 2)
+    if updated_trailer:
+        chunks.append(_chunk(usage=SimpleNamespace(prompt_tokens=30, completion_tokens=5,
+            total_tokens=35, prompt_tokens_details=SimpleNamespace(cached_tokens=7))))
+    async def run():
+        llm = AgentLLM()
+        async def client(provider):
+            return _FakeClient(chunks)
+        llm._get_client = client
+        return [c async for c in llm._stream_openai([], None, 'model', '', 0.0, 64, 'openrouter')]
+    events = asyncio.run(run())
+    usages = [event.usage for event in events if event.type == 'usage']
+    assert len(usages) == 1
+    assert usages[0].model_dump() == dict(input_tokens=30 if updated_trailer else 28,
+        output_tokens=5 if updated_trailer else 4, total_tokens=35 if updated_trailer else 32,
+        cache_read_tokens=7 if updated_trailer else 6, cache_creation_tokens=0)
+    assert len([event for event in events if event.type == 'tool_call_end']) == int(tool_call)
+    assert ''.join(event.text or '' for event in events if event.type == 'text_delta') == ('' if tool_call else 'OK')
 
 
 def _run_splitter(chunks):
