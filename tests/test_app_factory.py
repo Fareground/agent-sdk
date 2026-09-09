@@ -24,7 +24,7 @@ def test_create_app_has_agent_routes():
     app = create_app(
         agents={"test": AgentDefinition(name="test", model="mock:test")},
     )
-    route_paths = [getattr(r, "path", "") for r in app.routes]
+    route_paths = list(app.openapi()["paths"])
     assert any("/sessions" in p for p in route_paths), (
         f"No /sessions route found in {route_paths}"
     )
