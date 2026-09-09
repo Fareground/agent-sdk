@@ -94,6 +94,7 @@ class ToolCall(BaseModel):
     id: str = Field(default_factory=_uuid)
     tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments_error: str | None = None
 
 
 class ToolResult(BaseModel):
