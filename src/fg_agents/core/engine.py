@@ -625,11 +625,18 @@ class AgentEngine:
                     # Middleware: before_tool_call
                     current_tc: ToolCall | None = tc
                     for mw in self._middleware:
-                        if current_tc is None:
+                        if current_tc is None or tc.arguments_error:
                             break
                         current_tc = await mw.before_tool_call(current_tc, context)
 
-                    if current_tc is None:
+                    if tc.arguments_error:
+                        result = ToolResult(
+                            tool_call_id=tc.id,
+                            tool_name=tc.tool_name,
+                            status=ToolStatus.ERROR,
+                            error=tc.arguments_error + " This call was not executed. Other successful calls in this turn must not be repeated.",
+                        )
+                    elif current_tc is None:
                         result = ToolResult(
                             tool_call_id=tc.id,
                             tool_name=tc.tool_name,

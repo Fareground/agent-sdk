@@ -819,16 +819,28 @@ class AgentLLM:
             # tool call once and carries the final usage (captured from the
             # trailing include_usage chunk above).
             for idx, buf in sorted(tool_call_buffers.items()):
+                arguments_error = None
                 try:
+                    if not buf["arguments"] and stop_reason == StopReason.MAX_TOKENS:
+                        raise ValueError("Tool arguments were not emitted")
                     args = json.loads(buf["arguments"]) if buf["arguments"] else {}
-                except json.JSONDecodeError:
+                    if not isinstance(args, dict):
+                        raise ValueError("Tool arguments must be a JSON object")
+                except ValueError:
                     args = {}
+                    arguments_error = (
+                        "Tool arguments were cut off by the output token limit. "
+                        "Re-issue this call with a smaller, complete JSON object."
+                        if stop_reason == StopReason.MAX_TOKENS else
+                        "Tool arguments were not a valid JSON object. Re-issue this call with valid JSON."
+                    )
                 yield LLMStreamChunk(
                     type="tool_call_end",
                     tool_call=ToolCall(
                         id=buf["id"],
                         tool_name=buf["name"],
                         arguments=args,
+                        arguments_error=arguments_error,
                     ),
                 )
             yield LLMStreamChunk(
