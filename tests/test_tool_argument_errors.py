@@ -5,11 +5,18 @@ from types import SimpleNamespace
 import pytest
 
 from fg_agents.core.llm import AgentLLM
-from fg_agents.core.types import AgentDefinition, LLMStreamChunk, LLMUsage, MessageRole, StopReason, ToolCall
+from fg_agents.core.types import (
+    AgentDefinition,
+    LLMStreamChunk,
+    LLMUsage,
+    MessageRole,
+    StopReason,
+    ToolCall,
+)
 from fg_agents.tools.decorators import tool
 from tests.helpers import MockLLM, make_text_response, make_tool_call_response
 from tests.test_engine import build_engine
-from tests.test_stream_openai_no_duplicate_tool_calls import _FakeClient, _chunk, _delta, _tc_delta
+from tests.test_stream_openai_no_duplicate_tool_calls import _chunk, _delta, _FakeClient, _tc_delta
 
 
 @pytest.mark.parametrize('raw,finish,error', [
@@ -81,6 +88,9 @@ async def test_engine_reports_truncation_without_executing_or_repeating_side_eff
     saved_call = next(m.tool_calls[1] for m in messages if m.role == MessageRole.ASSISTANT and m.tool_calls and len(m.tool_calls) == 2)
     assert saved_call.arguments_error and 'cut off' in saved_call.arguments_error
     assert llm._call_count == 3
+    session = await repo.get_session('s1')
+    assert session.total_input_tokens == 210
+    assert session.total_output_tokens == 4146
 
 
 @pytest.mark.asyncio

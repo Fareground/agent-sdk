@@ -107,9 +107,9 @@ def test_bogus_memory_reported_before_model_detection(monkeypatch):
         Agent(memory="redis")
 
 
-def test_missing_provider_package_fails_at_construction():
-    # The dev environment deliberately has no provider SDKs installed, so a
-    # provider-qualified model must fail eagerly with the install hint.
+def test_missing_provider_package_fails_at_construction(monkeypatch):
+    # Simulate absence even when an application's environment has SDKs installed.
+    monkeypatch.setattr('fg_agents.core.llm._module_available', lambda module: False)
     with pytest.raises(ImportError, match=r"fg-agents\[anthropic\]"):
         Agent(model="anthropic:claude-sonnet-4-6")
 
