@@ -49,11 +49,37 @@ def test_stream_preserves_argument_failures_and_valid_parallel_calls(raw, finish
     assert calls[1].arguments == {}
     if error:
         assert error in calls[1].arguments_error
+        diagnostic = calls[1].arguments_diagnostic
+        assert diagnostic.characters == len(raw)
+        assert diagnostic.fragments == int(bool(raw))
+        assert diagnostic.stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE)
     else:
         assert calls[1].arguments_error is None
     usage = [event for event in events if event.type == 'usage']
     assert len(usage) == 1 and usage[0].usage.total_tokens == 4196
     assert usage[0].stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE)
+
+
+def test_wire_fragments_reassemble_once_with_content_free_multiline_location():
+    import json
+
+    from fg_agents.core.tool_arguments import decode_tool_call
+    from fg_agents.core.types import ToolCall
+
+    raw = '{\n"secret":"PRIVATE_VALUE",\n"payload":}'
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as error:
+        expected = (error.lineno, error.colno, error.pos)
+    # Every split preserves the same parser coordinates and call identity.
+    for split in range(len(raw) + 1):
+        call = decode_tool_call('one', 'publish', [raw[:split], raw[split:]], StopReason.TOOL_USE)
+        diagnostic = call.arguments_diagnostic
+        assert (diagnostic.line, diagnostic.column, diagnostic.position) == expected
+        assert diagnostic.fragments == 2 and diagnostic.characters == len(raw)
+        assert 'PRIVATE_VALUE' not in call.model_dump_json()
+        assert len(call.arguments_error) < 300
+        assert ToolCall.model_validate_json(call.model_dump_json()) == call
 
 
 @pytest.mark.asyncio
