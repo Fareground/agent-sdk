@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fg-agents"
-version = "0.3.8.post3"
+version = "0.3.8.post4"
 license = { text = "Apache-2.0" }
 description = "Agent framework for web applications. SSE streaming, PostgreSQL persistence, FastAPI integration."
 readme = "README.md"
