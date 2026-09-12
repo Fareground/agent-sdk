@@ -23,6 +23,7 @@ from tests.test_stream_openai_no_duplicate_tool_calls import _chunk, _delta, _Fa
     ('{"payload":', 'length', 'cut off'),
     ('', 'length', 'cut off'),
     ('{"payload":', 'tool_calls', 'valid JSON'),
+    ('{"payload":', None, 'valid JSON'),
     ('[]', 'tool_calls', 'valid JSON'),
     ('null', 'tool_calls', 'valid JSON'),
     ('{}', 'length', None),
@@ -52,12 +53,12 @@ def test_stream_preserves_argument_failures_and_valid_parallel_calls(raw, finish
         diagnostic = calls[1].arguments_diagnostic
         assert diagnostic.characters == len(raw)
         assert diagnostic.fragments == int(bool(raw))
-        assert diagnostic.stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE)
+        assert diagnostic.stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE if finish else StopReason.END_TURN)
     else:
         assert calls[1].arguments_error is None
     usage = [event for event in events if event.type == 'usage']
     assert len(usage) == 1 and usage[0].usage.total_tokens == 4196
-    assert usage[0].stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE)
+    assert usage[0].stop_reason == (StopReason.MAX_TOKENS if finish == 'length' else StopReason.TOOL_USE if finish else StopReason.END_TURN)
 
 
 def test_wire_fragments_reassemble_once_with_content_free_multiline_location():

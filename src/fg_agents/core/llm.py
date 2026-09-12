@@ -616,14 +616,18 @@ class AgentLLM:
                     yield LLMStreamChunk(type='tool_call_end', tool_call=call)
                 yield LLMStreamChunk(type="usage", usage=usage, stop_reason=stop)
 
+        except ValueError:
+            # Native SDK decoding/validation errors may embed complete tool
+            # JSON. Their wording is not stable or a safe classification input.
+            # Leave this handler before raising so even __context__ cannot
+            # retain the private provider exception for telemetry serializers.
+            pass
         except Exception as e:
-            # The native SDK's incremental parser includes the complete tool
-            # JSON in this ValueError. Never forward that payload into logs,
-            # chat errors or provider-error classification.
-            if isinstance(e, ValueError) and str(e).startswith('Unable to parse tool parameter JSON from model.'):
-                raise LLMError('Provider tool argument stream could not be decoded.',
-                               provider='anthropic', model=model_name, retryable=False) from None
             self._handle_provider_error("anthropic", model_name, e)
+        else:
+            return
+        raise LLMError('Provider response could not be decoded.',
+                       provider='anthropic', model=model_name, retryable=False)
 
     async def _complete_anthropic(
         self, messages, tools, model_name, system_prompt, temperature, max_tokens
