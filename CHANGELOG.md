@@ -47,6 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README hello-world is now directly runnable (`asyncio.run`), with the bare
   `await` form kept only under an explicit async/REPL caption.
 
+### Tool argument safety (T-541)
+
+- Native Anthropic and OpenAI-compatible streamed calls share final JSON-object
+  validation. Malformed native calls no longer execute with empty defaults.
+- Failed calls retain content-free parse coordinates, fragment/character counts
+  and stop reason; argument contents are not included in diagnostics. Native
+  SDK parser errors that embed tool JSON are sanitized before propagation.
+- Stream fragments are joined once rather than repeatedly copying the growing
+  JSON string. Native calls complete only after final stop metadata is known;
+  valid sibling calls and usage snapshots remain intact.
+
 ### Security — audit hardening (2026-07-23)
 
 - **Tenant isolation is now enforced at the HTTP boundary (was: unenforced).**

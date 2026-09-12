@@ -19,6 +19,7 @@ from typing import Any
 import structlog
 
 from fg_agents.core.errors import ContextOverflowError, LLMError, LLMRateLimitError
+from fg_agents.core.tool_arguments import decode_tool_call
 from fg_agents.core.types import (
     AgentMessage,
     LLMResponse,
@@ -560,7 +561,8 @@ class AgentLLM:
             async with client.messages.stream(**kwargs) as stream:
                 current_tool_id = None
                 current_tool_name = None
-                accumulated_json = ""
+                tool_buffers = []
+                current_tool = None
 
                 async for event in stream:
                     if event.type == "content_block_start":
@@ -568,7 +570,8 @@ class AgentLLM:
                         if block.type == "tool_use":
                             current_tool_id = block.id
                             current_tool_name = block.name
-                            accumulated_json = ""
+                            current_tool = {'id': block.id, 'name': block.name, 'fragments': [], 'complete': False}
+                            tool_buffers.append(current_tool)
                             yield LLMStreamChunk(
                                 type="tool_call_start",
                                 tool_call_id=current_tool_id,
@@ -581,29 +584,19 @@ class AgentLLM:
                         elif delta.type == "thinking_delta":
                             yield LLMStreamChunk(type="thinking_delta", text=delta.thinking)
                         elif delta.type == "input_json_delta":
-                            accumulated_json += delta.partial_json
+                            if current_tool is not None and delta.partial_json:
+                                current_tool['fragments'].append(delta.partial_json)
                             yield LLMStreamChunk(
                                 type="tool_call_delta",
                                 tool_call_id=current_tool_id,
                                 arguments_delta=delta.partial_json,
                             )
                     elif event.type == "content_block_stop":
-                        if current_tool_id:
-                            try:
-                                args = json.loads(accumulated_json) if accumulated_json else {}
-                            except json.JSONDecodeError:
-                                args = {}
-                            yield LLMStreamChunk(
-                                type="tool_call_end",
-                                tool_call=ToolCall(
-                                    id=current_tool_id,
-                                    tool_name=current_tool_name or "",
-                                    arguments=args,
-                                ),
-                            )
+                        if current_tool is not None:
+                            current_tool['complete'] = True
                             current_tool_id = None
                             current_tool_name = None
-                            accumulated_json = ""
+                            current_tool = None
 
                 final = await stream.get_final_message()
                 usage = LLMUsage(
@@ -614,10 +607,27 @@ class AgentLLM:
                     total_tokens=final.usage.input_tokens + final.usage.output_tokens,
                 )
                 stop = _map_stop(final.stop_reason)
+                # Final stop metadata arrives after block_stop. Decode once,
+                # with that metadata, before any consumer can execute a call.
+                for buf in tool_buffers:
+                    call = decode_tool_call(buf['id'], buf['name'], buf['fragments'], stop,
+                                            complete=buf['complete'])
+                    buf['fragments'].clear()
+                    yield LLMStreamChunk(type='tool_call_end', tool_call=call)
                 yield LLMStreamChunk(type="usage", usage=usage, stop_reason=stop)
 
+        except ValueError:
+            # Native SDK decoding/validation errors may embed complete tool
+            # JSON. Their wording is not stable or a safe classification input.
+            # Leave this handler before raising so even __context__ cannot
+            # retain the private provider exception for telemetry serializers.
+            pass
         except Exception as e:
             self._handle_provider_error("anthropic", model_name, e)
+        else:
+            return
+        raise LLMError('Provider response could not be decoded.',
+                       provider='anthropic', model=model_name, retryable=False)
 
     async def _complete_anthropic(
         self, messages, tools, model_name, system_prompt, temperature, max_tokens
@@ -789,7 +799,7 @@ class AgentLLM:
                                 "name": tc_delta.function.name
                                 if tc_delta.function and tc_delta.function.name
                                 else "",
-                                "arguments": "",
+                                "fragments": [],
                             }
                             yield LLMStreamChunk(
                                 type="tool_call_start",
@@ -797,7 +807,7 @@ class AgentLLM:
                                 tool_name=tool_call_buffers[idx]["name"],
                             )
                         if tc_delta.function and tc_delta.function.arguments:
-                            tool_call_buffers[idx]["arguments"] += tc_delta.function.arguments
+                            tool_call_buffers[idx]["fragments"].append(tc_delta.function.arguments)
                         if tc_delta.id and not tool_call_buffers[idx]["id"]:
                             tool_call_buffers[idx]["id"] = tc_delta.id
 
@@ -819,29 +829,11 @@ class AgentLLM:
             # tool call once and carries the final usage (captured from the
             # trailing include_usage chunk above).
             for idx, buf in sorted(tool_call_buffers.items()):
-                arguments_error = None
-                try:
-                    if not buf["arguments"] and stop_reason == StopReason.MAX_TOKENS:
-                        raise ValueError("Tool arguments were not emitted")
-                    args = json.loads(buf["arguments"]) if buf["arguments"] else {}
-                    if not isinstance(args, dict):
-                        raise ValueError("Tool arguments must be a JSON object")
-                except ValueError:
-                    args = {}
-                    arguments_error = (
-                        "Tool arguments were cut off by the output token limit. "
-                        "Re-issue this call with a smaller, complete JSON object."
-                        if stop_reason == StopReason.MAX_TOKENS else
-                        "Tool arguments were not a valid JSON object. Re-issue this call with valid JSON."
-                    )
+                call = decode_tool_call(buf['id'], buf['name'], buf['fragments'], stop_reason)
+                buf['fragments'].clear()
                 yield LLMStreamChunk(
                     type="tool_call_end",
-                    tool_call=ToolCall(
-                        id=buf["id"],
-                        tool_name=buf["name"],
-                        arguments=args,
-                        arguments_error=arguments_error,
-                    ),
+                    tool_call=call,
                 )
             yield LLMStreamChunk(
                 type="usage",
