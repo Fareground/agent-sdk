@@ -107,16 +107,26 @@ async def test_native_failure_never_executes_default_and_persists_safe_diagnosti
     assert 'not executed' in result.content and 'line 1' in result.content
 
 
+@pytest.mark.parametrize('stage', ['iterate', 'final'])
+@pytest.mark.parametrize('message', [
+    'Unable to parse tool parameter JSON from model. JSON: PRIVATE_VALUE rate limit',
+    'New SDK wording: PRIVATE_VALUE context length',
+])
 @pytest.mark.asyncio
-async def test_native_sdk_parse_error_does_not_echo_private_tool_json():
+async def test_native_sdk_parse_error_does_not_echo_private_tool_json(stage, message):
     from fg_agents.core.errors import LLMError
 
     class BrokenStream(NativeStream):
         def __aiter__(self):
             async def events():
-                raise ValueError('Unable to parse tool parameter JSON from model. JSON: PRIVATE_VALUE rate limit')
-                yield  # Keep this an async iterator.
+                if stage == 'iterate':
+                    raise ValueError(message)
+                async for event in super(BrokenStream, self).__aiter__():
+                    yield event
             return events()
+
+        async def get_final_message(self):
+            raise ValueError(message)
 
     llm = AgentLLM()
     async def client(provider):
@@ -125,4 +135,42 @@ async def test_native_sdk_parse_error_does_not_echo_private_tool_json():
     with pytest.raises(LLMError, match='could not be decoded') as caught:
         _ = [event async for event in llm._stream_anthropic([], None, 'model', '', 0, 32)]
     assert 'PRIVATE_VALUE' not in str(caught.value)
-    assert caught.value.retryable is False and caught.value.__suppress_context__
+    assert caught.value.retryable is False
+    # No original exception is retained for downstream traceback/telemetry
+    # serializers to accidentally expose, even if they ignore suppress_context.
+    assert caught.value.__cause__ is None and caught.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_multiple_native_blocks_preserve_good_calls_and_reject_only_bad_call():
+    class MultipleStream(NativeStream):
+        def __aiter__(self):
+            async def events():
+                blocks = [['{"payload":', '{"id":1}}'], ['{"secret":"PRIVATE_VALUE","payload":'], ['{"payload":{"id":2}}']]
+                for index, fragments in enumerate(blocks):
+                    async for event in NativeStream(fragments):
+                        if event.type == 'content_block_start':
+                            event.content_block.id = f'call-{index}'
+                        yield event
+            return events()
+
+    llm = AgentLLM()
+    async def client(provider):
+        return SimpleNamespace(messages=SimpleNamespace(stream=lambda **kwargs: MultipleStream([])))
+    llm._get_client = client
+    events = [event async for event in llm._stream_anthropic([], None, 'model', '', 0, 32)]
+    calls = [event.tool_call for event in events if event.type == 'tool_call_end']
+    assert [call.id for call in calls] == ['call-0', 'call-1', 'call-2']
+    assert calls[0].arguments == {'payload': {'id': 1}}
+    assert calls[1].arguments_error and calls[1].arguments == {}
+    assert calls[2].arguments == {'payload': {'id': 2}}
+    assert [event.usage.total_tokens for event in events if event.type == 'usage'] == [30]
+    effects = []
+    @tool()
+    async def publish(payload: dict | None = None) -> str:
+        effects.append(payload)
+        return 'published'
+    engine, _, _ = await build_engine(MockLLM([events, make_text_response('Done')]), tools=[publish])
+    agent = AgentDefinition(name='test', model='mock:test', tools=['publish'], max_turns=2)
+    _ = [event async for event in engine.run('multiple', 'Publish', agent)]
+    assert effects == [{'id': 1}, {'id': 2}]
