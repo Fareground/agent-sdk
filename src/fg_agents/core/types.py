@@ -8,7 +8,7 @@ that every other module builds on.
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -87,6 +87,18 @@ def _now() -> datetime:
 # ══════════════════════════════════════════════════════════════════════
 
 
+class ToolArgumentDiagnostic(BaseModel):
+    """Content-free parse evidence; never includes raw arguments or snippets."""
+
+    code: Literal['invalid_json', 'non_object', 'missing_arguments', 'incomplete_stream']
+    characters: int
+    fragments: int
+    stop_reason: StopReason
+    line: int | None = None
+    column: int | None = None
+    position: int | None = None
+
+
 class ToolCall(BaseModel):
     """A tool invocation requested by the LLM."""
 
@@ -94,6 +106,7 @@ class ToolCall(BaseModel):
     tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     arguments_error: str | None = None
+    arguments_diagnostic: ToolArgumentDiagnostic | None = None
 
 
 class ToolResult(BaseModel):
