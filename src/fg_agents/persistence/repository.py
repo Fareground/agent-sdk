@@ -25,6 +25,7 @@ from fg_agents.persistence.models import (
     AgentArtifactModel,
     AgentAuditLogModel,
     AgentMemoryModel,
+    AgentMessageContentWindowModel,
     AgentMessageModel,
     AgentSessionModel,
     AgentToolExecutionModel,
@@ -75,12 +76,14 @@ class PostgresRepository(BaseRepository):
         from fg_agents.persistence.models import SCHEMA_VERSION, AgentSchemaVersionModel
 
         async with self._engine.begin() as conn:
+            # New workers may start together during a rollout. Serialize the
+            # additive schema setup rather than racing CREATE TABLE checks.
+            await conn.execute(select(func.pg_advisory_xact_lock(1684496481, 1)))
             await conn.run_sync(Base.metadata.create_all)
 
         # Check / set schema version
         async with self._session_factory() as db:
-            from sqlalchemy import select
-
+            await db.execute(select(func.pg_advisory_xact_lock(1684496481, 1)))
             result = await db.execute(
                 select(AgentSchemaVersionModel).where(AgentSchemaVersionModel.id == 1)
             )
@@ -263,6 +266,12 @@ class PostgresRepository(BaseRepository):
                 is_summarized=message.is_summarized,
             )
             db.add(model)
+            from .content_window import cached_window
+            window = cached_window(message)
+            if window is not None:
+                # Flush the parent first; both rows are committed together.
+                await db.flush()
+                db.add(AgentMessageContentWindowModel(**window))
             await db.commit()
             return message
 
@@ -293,21 +302,49 @@ class PostgresRepository(BaseRepository):
 
         validate_content_window(head_chars, tail_chars, exempt_tools)
         m = AgentMessageModel
+        c = AgentMessageContentWindowModel
         # #>> {} decodes the JSON scalar before character slicing: Unicode and
         # escape sequences use precisely the original Python string offsets.
         text = m.content.op('#>>')(cast(literal('{}'), ARRAY(Text)))
-        partial = and_(m.role == 'tool_result', func.json_typeof(m.content) == 'string',
+        eligible = and_(m.role == 'tool_result', func.json_typeof(m.content) == 'string',
                        or_(m.tool_calls.is_(None), func.json_typeof(m.tool_calls) == 'null'),
                        func.length(text) > head_chars + tail_chars)
         if exempt_tools:
-            partial = and_(partial, func.coalesce(m.tool_name, '').not_in(exempt_tools))
+            eligible = and_(eligible, func.coalesce(m.tool_name, '').not_in(exempt_tools))
+        from .content_window import CACHE_HEAD_CHARS, CACHE_TAIL_CHARS
+        cache_supported = head_chars <= CACHE_HEAD_CHARS and tail_chars <= CACHE_TAIL_CHARS
+        if cache_supported:
+            # Legacy rows are indexed lazily, in this session only. No original
+            # is updated. A restart reuses this derived view without re-decoding
+            # the body; concurrent first reads converge on the same primary key.
+            from sqlalchemy.dialects.postgresql import insert
+            source = select(m.id, m.session_id, func.length(text),
+                func.substr(text, 1, CACHE_HEAD_CHARS), func.right(text, CACHE_TAIL_CHARS)).outerjoin(
+                    c, and_(c.message_id == m.id, c.session_id == m.session_id)).where(
+                    m.session_id == session_id, m.is_summarized.is_(False),
+                    case((c.message_id.is_(None), and_(eligible,
+                        func.length(text) > CACHE_HEAD_CHARS + CACHE_TAIL_CHARS)), else_=False))
+            async with self.session() as db:
+                await db.execute(insert(c).from_select(
+                    ['message_id', 'session_id', 'total_characters', 'head', 'tail'], source,
+                ).on_conflict_do_nothing(index_elements=['message_id']))
+                await db.commit()
+        cached = c.message_id.is_not(None) if cache_supported else literal(False)
+        length = case((cached, c.total_characters), else_=func.length(text))
+        head = case((cached, func.substr(c.head, 1, head_chars)), else_=func.substr(text, 1, head_chars))
+        tail = case((cached, func.right(c.tail, tail_chars)), else_=func.right(text, tail_chars))
+        cached_eligible = c.total_characters > head_chars + tail_chars
+        if exempt_tools:
+            cached_eligible = and_(cached_eligible, func.coalesce(m.tool_name, '').not_in(exempt_tools))
+        partial = case((cached, cached_eligible), else_=eligible)
         columns = [column for column in m.__table__.columns if column.name != 'content']
         query = select(*columns,
             case((partial, literal('', type_=m.content.type)), else_=m.content).label('content'),
-            case((partial, func.length(text))).label('total_characters'),
-            case((partial, func.substr(text, 1, head_chars)), else_='').label('head'),
-            case((partial, func.right(text, tail_chars)), else_='').label('tail'),
-        ).where(m.session_id == session_id, m.is_summarized.is_(False)).order_by(m.created_at)
+            case((partial, length)).label('total_characters'),
+            case((partial, head), else_='').label('head'),
+            case((partial, tail), else_='').label('tail')).outerjoin(
+            c, and_(c.message_id == m.id, c.session_id == m.session_id)).where(
+            m.session_id == session_id, m.is_summarized.is_(False)).order_by(m.created_at)
         async with self.session() as db:
             rows = (await db.execute(query)).all()
         return [MessageContentWindow(self._message_from_model(row), row.total_characters, row.head, row.tail)

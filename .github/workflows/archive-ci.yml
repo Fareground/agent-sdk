@@ -29,4 +29,4 @@ jobs:
       - run: python -m pytest -q --tb=short
         env:
           SDK_TEST_DATABASE_URL: postgresql://sdk_test:sdk_test_only@localhost:5432/sdk_test
-      - run: ruff check src/fg_agents/persistence/base.py src/fg_agents/persistence/memory.py src/fg_agents/persistence/sqlite.py src/fg_agents/persistence/repository.py src/fg_agents/persistence/content_window.py tests/test_archive_reads.py tests/test_context_windows.py
+      - run: ruff check src/fg_agents/persistence/base.py src/fg_agents/persistence/memory.py src/fg_agents/persistence/sqlite.py src/fg_agents/persistence/repository.py src/fg_agents/persistence/content_window.py src/fg_agents/persistence/models.py tests/test_archive_reads.py tests/test_context_windows.py

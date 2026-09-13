@@ -125,6 +125,17 @@ class AgentMessageModel(Base):
 # ══════════════════════════════════════════════════════════════════════
 
 
+class AgentMessageContentWindowModel(Base):
+    """Disposable derived index; originals remain exclusively in af_messages."""
+    __tablename__ = 'af_message_content_windows'
+
+    message_id = Column(String(36), ForeignKey('af_messages.id', ondelete='CASCADE'), primary_key=True)
+    session_id = Column(String(36), nullable=False, index=True)
+    total_characters = Column(Integer, nullable=False)
+    head = Column(Text, nullable=False)
+    tail = Column(Text, nullable=False)
+
+
 class AgentToolExecutionModel(Base):
     __tablename__ = "af_tool_executions"
 

@@ -111,7 +111,8 @@ class BaseRepository(ABC):
                                   tail_chars: int = 400, exempt_tools: tuple[str, ...] = ()):
         """Project active tool text without changing get_messages ordering.
 
-        Durable backends select bounded head/tail strings in SQL. This default
+        Durable backends select bounded head/tail strings in SQL, lazily
+        indexing legacy originals in an additive, disposable cache. This default
         preserves compatibility for third-party/in-memory repositories, but
         does not promise bounded storage I/O. Callers must handle partial
         windows explicitly; user/assistant content and tool arguments stay whole.

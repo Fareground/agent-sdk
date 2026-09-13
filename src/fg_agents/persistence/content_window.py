@@ -8,6 +8,20 @@ from dataclasses import dataclass
 
 from fg_agents.core.types import AgentMessage, MessageRole
 
+CACHE_HEAD_CHARS = 12_000
+CACHE_TAIL_CHARS = 400
+
+
+def cached_window(message: AgentMessage) -> dict | None:
+    """A small immutable read index, committed atomically with its original."""
+    text = message.content
+    if (message.role != MessageRole.TOOL_RESULT or message.tool_calls or not isinstance(text, str)
+            or len(text) <= CACHE_HEAD_CHARS + CACHE_TAIL_CHARS or '\x00' in text
+            or text.lstrip().startswith('[')):
+        return None
+    return {'message_id': message.id, 'session_id': message.session_id, 'total_characters': len(text),
+            'head': text[:CACHE_HEAD_CHARS], 'tail': text[-CACHE_TAIL_CHARS:]}
+
 
 def validate_content_window(head_chars: int, tail_chars: int, exempt_tools: tuple[str, ...]) -> None:
     if (type(head_chars) is not int or not 1 <= head_chars <= 64_000
