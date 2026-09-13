@@ -324,6 +324,46 @@ class SQLiteRepository(BaseRepository):
         rows = await cursor.fetchall()
         return [self._message_from_row(r) for r in rows]
 
+    async def get_message(self, session_id: str, message_id: str) -> AgentMessage | None:
+        async with self._ensure_db().execute(
+            "SELECT * FROM af_messages WHERE session_id = ? AND id = ?", (session_id, message_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._message_from_row(row) if row else None
+
+    async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
+        from fg_agents.persistence.base import validate_message_batch_size
+
+        validate_message_batch_size(batch_size)
+        db = self._ensure_db()
+        conditions = "session_id = ?" + ("" if include_summarized else " AND is_summarized = 0")
+        async with db.execute(
+            f"SELECT created_at, id FROM af_messages WHERE {conditions} ORDER BY created_at DESC, id DESC LIMIT 1",
+            (session_id,),
+        ) as cursor:
+            upper = await cursor.fetchone()
+        if upper is None:
+            return
+        after = None
+        while True:
+            where = conditions + " AND (created_at, id) <= (?, ?)"
+            params = [session_id, upper['created_at'], upper['id']]
+            if after is not None:
+                where += " AND (created_at, id) > (?, ?)"
+                params.extend(after)
+            async with db.execute(
+                f"SELECT * FROM af_messages WHERE {where} ORDER BY created_at, id LIMIT ?",
+                [*params, batch_size],
+            ) as cursor:
+                rows = await cursor.fetchall()
+            if not rows:
+                return
+            after = (rows[-1]['created_at'], rows[-1]['id'])
+            for row in rows:
+                yield self._message_from_row(row)
+            if len(rows) < batch_size:
+                return
+
     async def mark_messages_summarized(
         self,
         session_id: str,

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from fg_agents.core.types import (
@@ -173,10 +173,9 @@ class PostgresRepository(BaseRepository):
             from .models import (
                 AgentArtifactModel,
                 AgentMessageModel,
-                AgentRunModel,
                 AgentToolExecutionModel,
             )
-            for child_model in [AgentToolExecutionModel, AgentArtifactModel, AgentRunModel, AgentMessageModel]:
+            for child_model in [AgentToolExecutionModel, AgentArtifactModel, AgentMessageModel]:
                 try:
                     await db.execute(
                         child_model.__table__.delete().where(child_model.session_id == session_id)
@@ -280,6 +279,45 @@ class PostgresRepository(BaseRepository):
                 query = query.where(AgentMessageModel.is_summarized == False)  # noqa: E712
             result = await db.execute(query)
             return [self._message_from_model(m) for m in result.scalars().all()]
+
+    async def get_message(self, session_id: str, message_id: str) -> AgentMessage | None:
+        async with self.session() as db:
+            row = (await db.execute(select(AgentMessageModel).where(
+                AgentMessageModel.session_id == session_id, AgentMessageModel.id == message_id,
+            ))).scalar_one_or_none()
+            return self._message_from_model(row) if row else None
+
+    async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
+        from fg_agents.persistence.base import validate_message_batch_size
+
+        validate_message_batch_size(batch_size)
+        model = AgentMessageModel
+        conditions = [model.session_id == session_id]
+        if not include_summarized:
+            conditions.append(model.is_summarized.is_(False))
+        async with self.session() as db:
+            upper = (await db.execute(select(model.created_at, model.id).where(*conditions)
+                .order_by(model.created_at.desc(), model.id.desc()).limit(1))).first()
+        if upper is None:
+            return
+        boundary = tuple_(model.created_at, model.id)
+        after = None
+        while True:
+            query = select(model).where(*conditions, boundary <= tuple(upper))
+            if after is not None:
+                query = query.where(boundary > after)
+            # Release the connection between batches. A long archive search
+            # must not hold a transaction while its consumer processes results.
+            async with self.session() as db:
+                rows = (await db.execute(query.order_by(model.created_at, model.id)
+                    .limit(batch_size))).scalars().all()
+            if not rows:
+                return
+            after = (rows[-1].created_at, rows[-1].id)
+            for row in rows:
+                yield self._message_from_model(row)
+            if len(rows) < batch_size:
+                return
 
     async def mark_messages_summarized(self, session_id: str, message_ids: list[str]) -> None:
         """Mark messages as consumed by summarization."""
