@@ -107,6 +107,23 @@ class BaseRepository(ABC):
         return next((m for m in await self.get_messages(session_id, include_summarized=True)
                      if m.id == message_id), None)
 
+    async def get_context_windows(self, session_id: str, *, head_chars: int = 12_000,
+                                  tail_chars: int = 400, exempt_tools: tuple[str, ...] = ()):
+        """Project active tool text without changing get_messages ordering.
+
+        Durable backends select bounded head/tail strings in SQL, lazily
+        indexing legacy originals in an additive, disposable cache. This default
+        preserves compatibility for third-party/in-memory repositories, but
+        does not promise bounded storage I/O. Callers must handle partial
+        windows explicitly; user/assistant content and tool arguments stay whole.
+        """
+        from .content_window import MessageContentWindow, validate_content_window
+
+        validate_content_window(head_chars, tail_chars, exempt_tools)
+        return [MessageContentWindow.from_message(m, head_chars=head_chars, tail_chars=tail_chars,
+                                                   exempt_tools=exempt_tools)
+                for m in await self.get_messages(session_id, include_summarized=False)]
+
     async def iter_messages(
         self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64,
     ) -> AsyncIterator[AgentMessage]:

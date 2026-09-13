@@ -63,6 +63,19 @@ CREATE TABLE IF NOT EXISTS af_messages (
 );
 CREATE INDEX IF NOT EXISTS ix_af_messages_session ON af_messages(session_id, created_at);
 
+CREATE TABLE IF NOT EXISTS af_message_content_windows (
+    message_id TEXT PRIMARY KEY REFERENCES af_messages(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    total_characters INTEGER NOT NULL,
+    head TEXT NOT NULL,
+    tail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_af_message_windows_session ON af_message_content_windows(session_id);
+CREATE TRIGGER IF NOT EXISTS af_message_window_cleanup AFTER DELETE ON af_messages
+BEGIN
+    DELETE FROM af_message_content_windows WHERE message_id = OLD.id;
+END;
+
 CREATE TABLE IF NOT EXISTS af_tool_executions (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
@@ -302,6 +315,12 @@ class SQLiteRepository(BaseRepository):
                 int(message.is_summarized),
             ),
         )
+        from .content_window import cached_window
+        window = cached_window(message)
+        if window is not None:
+            await db.execute('INSERT INTO af_message_content_windows '
+                '(message_id,session_id,total_characters,head,tail) VALUES (:message_id,:session_id,:total_characters,:head,:tail)',
+                window)
         await db.commit()
         return message
 
@@ -330,6 +349,56 @@ class SQLiteRepository(BaseRepository):
         ) as cursor:
             row = await cursor.fetchone()
         return self._message_from_row(row) if row else None
+
+    async def get_context_windows(self, session_id: str, *, head_chars: int = 12_000,
+                                  tail_chars: int = 400, exempt_tools: tuple[str, ...] = ()):
+        from .content_window import MessageContentWindow, validate_content_window
+
+        validate_content_window(head_chars, tail_chars, exempt_tools)
+        from .content_window import CACHE_HEAD_CHARS, CACHE_TAIL_CHARS
+        # Native SQLite stores strings as text, not JSON scalars. A leading
+        # array may decode as multimodal content; preserve that body verbatim.
+        # SQLite length/substr stop at NUL, so those rare originals stay whole.
+        exempt = ','.join('?' for _ in exempt_tools)
+        condition = ("role = 'tool_result' AND tool_calls IS NULL "
+                     "AND ltrim(content) NOT LIKE '[%' AND instr(content, char(0)) = 0 "
+                     "AND length(content) > ?")
+        params = [head_chars + tail_chars]
+        if exempt_tools:
+            condition += f" AND coalesce(tool_name, '') NOT IN ({exempt})"
+            params.extend(exempt_tools)
+        db = self._ensure_db()
+        cache_supported = head_chars <= CACHE_HEAD_CHARS and tail_chars <= CACHE_TAIL_CHARS
+        if cache_supported:
+            await db.execute(f"""INSERT OR IGNORE INTO af_message_content_windows
+                SELECT id,session_id,length(content),substr(content,1,?),substr(content,-?) FROM af_messages
+                WHERE session_id = ? AND is_summarized = 0
+                AND CASE WHEN NOT EXISTS (SELECT 1 FROM af_message_content_windows c WHERE c.message_id = af_messages.id)
+                    THEN ({condition}) AND length(content) > ? ELSE 0 END
+                """, [CACHE_HEAD_CHARS, CACHE_TAIL_CHARS, session_id, *params, CACHE_HEAD_CHARS + CACHE_TAIL_CHARS])
+            await db.commit()
+        cached = 'cache_id IS NOT NULL' if cache_supported else '0'
+        cached_eligible = 'total_characters > ?'
+        cached_params = [head_chars + tail_chars]
+        if exempt_tools:
+            cached_eligible += f" AND coalesce(tool_name, '') NOT IN ({exempt})"
+            cached_params.extend(exempt_tools)
+        query = f"""WITH projected AS (
+            SELECT m.*,c.message_id AS cache_id,c.total_characters,c.head,c.tail FROM af_messages m
+            LEFT JOIN af_message_content_windows c ON c.message_id = m.id AND c.session_id = m.session_id
+            WHERE m.session_id = ? AND m.is_summarized = 0
+        ), selected AS (
+            SELECT *,CASE WHEN {cached} THEN ({cached_eligible}) ELSE ({condition}) END AS partial FROM projected
+        ) SELECT id,session_id,role,tool_calls,tool_call_id,tool_name,token_count,model,created_at,is_summarized,
+            CASE WHEN partial THEN '' ELSE content END AS content,
+            CASE WHEN partial THEN CASE WHEN {cached} THEN total_characters ELSE length(content) END END AS total_characters,
+            CASE WHEN partial THEN substr(CASE WHEN {cached} THEN head ELSE content END,1,?) ELSE '' END AS head,
+            CASE WHEN partial AND ? > 0 THEN substr(CASE WHEN {cached} THEN tail ELSE content END,-?) ELSE '' END AS tail
+          FROM selected ORDER BY created_at"""
+        async with db.execute(query, [session_id, *cached_params, *params, head_chars, tail_chars, tail_chars]) as cursor:
+            rows = await cursor.fetchall()
+        return [MessageContentWindow(self._message_from_row(row), row['total_characters'], row['head'], row['tail'])
+                for row in rows]
 
     async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
         from fg_agents.persistence.base import validate_message_batch_size
