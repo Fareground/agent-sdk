@@ -147,6 +147,22 @@ class InMemoryRepository(BaseRepository):
             msgs = [m for m in msgs if not m.is_summarized]
         return [m.model_copy() for m in msgs]
 
+    async def get_message(self, session_id: str, message_id: str) -> AgentMessage | None:
+        return next((m.model_copy() for m in self._messages.get(session_id, [])
+                     if m.id == message_id), None)
+
+    async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
+        from fg_agents.persistence.base import validate_message_batch_size
+
+        validate_message_batch_size(batch_size)
+        messages = self._messages.get(session_id, [])
+        # A fixed high-water position excludes messages appended during a scan.
+        end = len(messages)
+        for index in range(end):
+            message = messages[index]
+            if include_summarized or not message.is_summarized:
+                yield message.model_copy()
+
     async def mark_messages_summarized(
         self,
         session_id: str,

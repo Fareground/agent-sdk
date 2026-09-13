@@ -1,0 +1,32 @@
+name: Agent archive CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.11', '3.12']
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: sdk_test
+          POSTGRES_PASSWORD: sdk_test_only
+          POSTGRES_DB: sdk_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U sdk_test'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e '.[dev,anthropic,openai]'
+      - run: python -m pytest -q --tb=short
+        env:
+          SDK_TEST_DATABASE_URL: postgresql://sdk_test:sdk_test_only@localhost:5432/sdk_test
+      - run: ruff check src/fg_agents/persistence/base.py src/fg_agents/persistence/memory.py src/fg_agents/persistence/sqlite.py src/fg_agents/persistence/repository.py tests/test_archive_reads.py
