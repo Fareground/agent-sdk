@@ -331,6 +331,36 @@ class SQLiteRepository(BaseRepository):
             row = await cursor.fetchone()
         return self._message_from_row(row) if row else None
 
+    async def get_context_windows(self, session_id: str, *, head_chars: int = 12_000,
+                                  tail_chars: int = 400, exempt_tools: tuple[str, ...] = ()):
+        from .content_window import MessageContentWindow, validate_content_window
+
+        validate_content_window(head_chars, tail_chars, exempt_tools)
+        # Native SQLite stores strings as text, not JSON scalars. A leading
+        # array may decode as multimodal content; preserve that body verbatim.
+        # SQLite length/substr stop at NUL, so those rare originals stay whole.
+        exempt = ','.join('?' for _ in exempt_tools)
+        condition = ("role = 'tool_result' AND tool_calls IS NULL "
+                     "AND ltrim(content) NOT LIKE '[%' AND instr(content, char(0)) = 0 "
+                     "AND length(content) > ?")
+        params = [head_chars + tail_chars]
+        if exempt_tools:
+            condition += f" AND coalesce(tool_name, '') NOT IN ({exempt})"
+            params.extend(exempt_tools)
+        query = f"""WITH projected AS (
+            SELECT *, ({condition}) AS partial FROM af_messages
+            WHERE session_id = ? AND is_summarized = 0
+        ) SELECT id,session_id,role,tool_calls,tool_call_id,tool_name,token_count,model,created_at,is_summarized,
+            CASE WHEN partial THEN '' ELSE content END AS content,
+            CASE WHEN partial THEN length(content) END AS total_characters,
+            CASE WHEN partial THEN substr(content,1,?) ELSE '' END AS head,
+            CASE WHEN partial AND ? > 0 THEN substr(content,-?) ELSE '' END AS tail
+          FROM projected ORDER BY created_at"""
+        async with self._ensure_db().execute(query, [*params, session_id, head_chars, tail_chars, tail_chars]) as cursor:
+            rows = await cursor.fetchall()
+        return [MessageContentWindow(self._message_from_row(row), row['total_characters'], row['head'], row['tail'])
+                for row in rows]
+
     async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
         from fg_agents.persistence.base import validate_message_batch_size
 

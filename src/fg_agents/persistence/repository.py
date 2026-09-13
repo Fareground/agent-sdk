@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, select, tuple_, update
+from sqlalchemy import ARRAY, Text, and_, case, cast, func, literal, or_, select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from fg_agents.core.types import (
@@ -286,6 +286,32 @@ class PostgresRepository(BaseRepository):
                 AgentMessageModel.session_id == session_id, AgentMessageModel.id == message_id,
             ))).scalar_one_or_none()
             return self._message_from_model(row) if row else None
+
+    async def get_context_windows(self, session_id: str, *, head_chars: int = 12_000,
+                                  tail_chars: int = 400, exempt_tools: tuple[str, ...] = ()):
+        from .content_window import MessageContentWindow, validate_content_window
+
+        validate_content_window(head_chars, tail_chars, exempt_tools)
+        m = AgentMessageModel
+        # #>> {} decodes the JSON scalar before character slicing: Unicode and
+        # escape sequences use precisely the original Python string offsets.
+        text = m.content.op('#>>')(cast(literal('{}'), ARRAY(Text)))
+        partial = and_(m.role == 'tool_result', func.json_typeof(m.content) == 'string',
+                       or_(m.tool_calls.is_(None), func.json_typeof(m.tool_calls) == 'null'),
+                       func.length(text) > head_chars + tail_chars)
+        if exempt_tools:
+            partial = and_(partial, func.coalesce(m.tool_name, '').not_in(exempt_tools))
+        columns = [column for column in m.__table__.columns if column.name != 'content']
+        query = select(*columns,
+            case((partial, literal('', type_=m.content.type)), else_=m.content).label('content'),
+            case((partial, func.length(text))).label('total_characters'),
+            case((partial, func.substr(text, 1, head_chars)), else_='').label('head'),
+            case((partial, func.right(text, tail_chars)), else_='').label('tail'),
+        ).where(m.session_id == session_id, m.is_summarized.is_(False)).order_by(m.created_at)
+        async with self.session() as db:
+            rows = (await db.execute(query)).all()
+        return [MessageContentWindow(self._message_from_model(row), row.total_characters, row.head, row.tail)
+                for row in rows]
 
     async def iter_messages(self, session_id: str, *, include_summarized: bool = True, batch_size: int = 64):
         from fg_agents.persistence.base import validate_message_batch_size
